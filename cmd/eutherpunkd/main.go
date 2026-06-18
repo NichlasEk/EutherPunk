@@ -12,14 +12,19 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/NichlasEk/EutherPunk/internal/config"
 )
 
 const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfiguration och praktisk felsokning. Var konkret, fraga innan destruktiva atgarder och prioritera sakra forslag."
 
 type serverConfig struct {
-	addr      string
-	ollamaURL string
-	model     string
+	addr           string
+	ollamaURL      string
+	model          string
+	configPath     string
+	eutherOxideURL string
+	users          map[string]config.UserConfig
 }
 
 type chatRequest struct {
@@ -51,15 +56,24 @@ type ollamaChatResponse struct {
 }
 
 func main() {
+	appConfig, err := config.Load("")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	cfg := serverConfig{
-		addr:      envOr("EUTHERPUNK_ADDR", ":8787"),
-		ollamaURL: strings.TrimRight(envOr("OLLAMA_URL", "http://127.0.0.1:11434"), "/"),
-		model:     envOr("EUTHERPUNK_MODEL", "qwen3-coder:30b"),
+		addr:           envOr("EUTHERPUNK_ADDR", appConfig.Agent.Listen),
+		ollamaURL:      strings.TrimRight(envOr("OLLAMA_URL", appConfig.Agent.OllamaURL), "/"),
+		model:          envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
+		configPath:     appConfig.Path,
+		eutherOxideURL: appConfig.EutherOxide.UsersURL,
+		users:          appConfig.Users,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/eutherpunk/status", handleStatus(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/models", handleModels(cfg))
+	mux.HandleFunc("GET /api/eutherpunk/users", handleUsers(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/chat", handleChat(cfg))
 
 	log.Printf("eutherpunkd listening on %s, ollama=%s, model=%s", cfg.addr, cfg.ollamaURL, cfg.model)
@@ -75,6 +89,8 @@ func handleStatus(cfg serverConfig) http.HandlerFunc {
 			"service":    "eutherpunk",
 			"model":      cfg.model,
 			"ollama_url": cfg.ollamaURL,
+			"config":     cfg.configPath,
+			"users":      len(cfg.users),
 		})
 	}
 }
@@ -92,6 +108,16 @@ func handleModels(cfg serverConfig) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(body)
+	}
+}
+
+func handleUsers(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"source":            "toml",
+			"eutheroxide_users": cfg.eutherOxideURL,
+			"users":             cfg.users,
+		})
 	}
 }
 

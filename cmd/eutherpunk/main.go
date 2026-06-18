@@ -10,11 +10,14 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/NichlasEk/EutherPunk/internal/config"
 )
 
 type cliConfig struct {
-	apiURL string
-	model  string
+	apiURL     string
+	model      string
+	configPath string
 }
 
 type chatRequest struct {
@@ -29,9 +32,16 @@ type chatResponse struct {
 }
 
 func main() {
+	appConfig, err := config.Load("")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
 	cfg := cliConfig{
-		apiURL: strings.TrimRight(envOr("EUTHERPUNK_URL", "http://127.0.0.1:8787"), "/"),
-		model:  envOr("EUTHERPUNK_MODEL", "qwen3-coder:30b"),
+		apiURL:     strings.TrimRight(envOr("EUTHERPUNK_URL", appConfig.Agent.APIURL), "/"),
+		model:      envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
+		configPath: appConfig.Path,
 	}
 
 	if len(os.Args) < 2 {
@@ -39,7 +49,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	var err error
+	err = nil
 	switch os.Args[1] {
 	case "doctor":
 		err = doctor(cfg)
@@ -47,6 +57,8 @@ func main() {
 		err = printGet(cfg.apiURL + "/api/eutherpunk/status")
 	case "models":
 		err = printGet(cfg.apiURL + "/api/eutherpunk/models")
+	case "users":
+		err = printGet(cfg.apiURL + "/api/eutherpunk/users")
 	case "ask":
 		err = ask(cfg, strings.Join(os.Args[2:], " "))
 	default:
@@ -61,6 +73,7 @@ func main() {
 
 func doctor(cfg cliConfig) error {
 	fmt.Println("EutherPunk CLI")
+	fmt.Println("config:", cfg.configPath)
 	fmt.Println("api_url:", cfg.apiURL)
 	fmt.Println("model:", cfg.model)
 	fmt.Println()
@@ -129,6 +142,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  eutherpunk doctor")
 	fmt.Fprintln(os.Stderr, "  eutherpunk status")
 	fmt.Fprintln(os.Stderr, "  eutherpunk models")
+	fmt.Fprintln(os.Stderr, "  eutherpunk users")
 	fmt.Fprintln(os.Stderr, "  eutherpunk ask <prompt>")
 }
 

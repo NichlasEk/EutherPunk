@@ -7,12 +7,24 @@ prefer_lan = true
 
 [agent]
 api_url = "http://127.0.0.1:8787"
+listen = ":8787"
 ollama_url = "http://127.0.0.1:11434"
 model = "qwen3-coder:30b"
 safe_mode = true
+
+[eutheroxide]
+base_url = "http://192.168.32.186:8080"
+users_url = "http://192.168.32.186:8080/api/app/users"
+auth_required = true
 
 [tools]
 allow_read = true
 allow_write = false
 allow_shell = false
 require_approval_for_apply = true
+
+[users.nichlas]
+eutheroxide_id = "nichlas"
+eutheroxide_username = "nichlas"
+model = "qwen3-coder:30b"
+safe_mode = true
