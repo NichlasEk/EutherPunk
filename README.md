@@ -20,6 +20,7 @@ EutherPunk should be treated as the agent and product layer above one or more lo
 
 - `cmd/eutherpunkd`: local API service that proxies chat to Ollama.
 - `cmd/eutherpunk`: CLI client for status checks and prompts.
+- `cmd/eutherpunkd/web`: thin browser client for text chat, TTS, and voice input.
 - `config/eutherpunk.example.toml`: TOML config shape.
 - `docs/EUTHERPUNK_PLAN.md`: full project plan.
 
@@ -76,6 +77,12 @@ Start EutherPunk API:
 go run ./cmd/eutherpunkd
 ```
 
+Open the web client:
+
+```text
+http://127.0.0.1:8787/eutherpunk
+```
+
 Check status:
 
 ```bash
@@ -94,6 +101,36 @@ Ask the model:
 go run ./cmd/eutherpunk ask "sammanfatta vad EutherPunk ska bli"
 ```
 
+Stream an answer in the terminal:
+
+```bash
+go run ./cmd/eutherpunk chat "vad kan du hjälpa mig med?"
+```
+
+## Build CLI Downloads
+
+Build current target:
+
+```bash
+scripts/build.sh
+```
+
+Build another target:
+
+```bash
+GOOS=windows GOARCH=amd64 scripts/build.sh
+GOOS=darwin GOARCH=arm64 scripts/build.sh
+GOOS=linux GOARCH=arm64 scripts/build.sh
+```
+
+The daemon serves CLI binaries from `dist/cli`:
+
+```text
+GET /downloads/eutherpunk-cli/linux-amd64
+GET /downloads/eutherpunk-cli/windows-amd64
+GET /downloads/eutherpunk-cli/darwin-arm64
+```
+
 ## Useful Environment
 
 ```text
@@ -107,3 +144,10 @@ OLLAMA_URL=http://127.0.0.1:11434
 ## Server Direction
 
 EutherOxide should expose EutherPunk through authenticated routes and downloads, while Ollama remains internal. Public traffic should go through EutherOxide or another trusted gateway, not directly to Ollama.
+
+The intended public shape is a thin EutherOxide-hosted web/client layer backed by the EutherPunk API:
+
+- Browser text chat through `POST /api/eutherpunk/chat/stream`.
+- Browser TTS through `speechSynthesis` first, server-side TTS later.
+- Browser voice input through `SpeechRecognition` where supported, server-side STT later.
+- CLI downloads through `/downloads/eutherpunk-cli/{platform}`.

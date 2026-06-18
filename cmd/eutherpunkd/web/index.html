@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EutherPunk</title>
+    <link rel="stylesheet" href="/web/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar" aria-label="Status">
+        <div>
+          <h1>EutherPunk</h1>
+          <p id="status">Ansluter...</p>
+        </div>
+        <div class="actions">
+          <a class="download" href="/downloads/eutherpunk-cli/linux-amd64">CLI</a>
+          <button id="voiceToggle" type="button">TTS av</button>
+        </div>
+      </section>
+
+      <section id="messages" class="messages" aria-live="polite"></section>
+
+      <form id="chatForm" class="composer">
+        <button id="micButton" class="icon" type="button" title="Prata">Mic</button>
+        <textarea id="prompt" rows="2" placeholder="Skriv till EutherPunk..."></textarea>
+        <button type="submit">Skicka</button>
+      </form>
+    </main>
+    <script src="/web/app.js"></script>
+  </body>
+</html>

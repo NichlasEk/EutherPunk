@@ -12,6 +12,9 @@ ollama_url = "http://127.0.0.1:11434"
 model = "qwen3-coder:30b"
 safe_mode = true
 
+[downloads]
+directory = "dist/cli"
+
 [eutheroxide]
 base_url = "http://192.168.32.186:8080"
 users_url = "http://192.168.32.186:8080/api/app/users"

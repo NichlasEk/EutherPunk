@@ -14,6 +14,7 @@ type Config struct {
 	Profile     string                `json:"profile"`
 	Server      ServerConfig          `json:"server"`
 	Agent       AgentConfig           `json:"agent"`
+	Downloads   DownloadsConfig       `json:"downloads"`
 	EutherOxide EutherOxideConfig     `json:"eutheroxide"`
 	Tools       ToolsConfig           `json:"tools"`
 	Users       map[string]UserConfig `json:"users"`
@@ -32,6 +33,10 @@ type AgentConfig struct {
 	OllamaURL string `json:"ollama_url"`
 	Model     string `json:"model"`
 	SafeMode  bool   `json:"safe_mode"`
+}
+
+type DownloadsConfig struct {
+	Directory string `json:"directory"`
 }
 
 type EutherOxideConfig struct {
@@ -69,6 +74,9 @@ func Default() Config {
 			OllamaURL: "http://127.0.0.1:11434",
 			Model:     "qwen3-coder:30b",
 			SafeMode:  true,
+		},
+		Downloads: DownloadsConfig{
+			Directory: "dist/cli",
 		},
 		EutherOxide: EutherOxideConfig{
 			BaseURL:      "http://192.168.32.186:8080",
@@ -210,6 +218,13 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.EutherOxide.UsersURL = mustString(raw)
 		case "auth_required":
 			cfg.EutherOxide.AuthRequired = mustBool(raw)
+		default:
+			return unknown(section, key)
+		}
+	case "downloads":
+		switch key {
+		case "directory":
+			cfg.Downloads.Directory = mustString(raw)
 		default:
 			return unknown(section, key)
 		}

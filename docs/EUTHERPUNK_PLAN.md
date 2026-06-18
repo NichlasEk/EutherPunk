@@ -60,6 +60,8 @@ EutherOxide ska vara den yta användaren möter. Den bör proxy:a till EutherPun
 
 CLI, webbvy och mobilapp ska prata med samma EutherPunk API. Då slipper varje klient implementera egen modell-logik.
 
+Webblagret bör vara en thin client: browsern hanterar snabb UI, lokal TTS och voice input när det stöds, medan EutherPunk API håller modellval, session, auth och tool-policy. Server-side TTS/STT kan läggas bakom samma API senare när browserstöd inte räcker.
+
 ## API-Skiss
 
 Första interna endpoints:
@@ -67,7 +69,9 @@ Första interna endpoints:
 ```text
 GET  /api/eutherpunk/status
 GET  /api/eutherpunk/models
+GET  /api/eutherpunk/users
 POST /api/eutherpunk/chat
+POST /api/eutherpunk/chat/stream
 POST /api/eutherpunk/sessions
 GET  /api/eutherpunk/sessions/{id}
 POST /api/eutherpunk/tools/plan
@@ -125,6 +129,12 @@ Första mobilversion:
 - enkel filöverföring senare
 
 TTS bör återanvända befintliga EutherLink/EutherBooks-erfarenheter i stället för att byggas från noll. Dots/VoxCPM2-spåret finns redan i `/home/nichlas/ai` och bör ses som kandidat för röstläge.
+
+Första webbröstläget kan börja tunnare:
+
+- `speechSynthesis` i browsern för TTS
+- `SpeechRecognition` i browsern för voice-to-text där det stöds
+- server-side STT/TTS senare när vi vill ha samma kvalitet på alla klienter
 
 ## Säkerhetsmodell
 
