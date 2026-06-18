@@ -11,8 +11,8 @@ const voiceToggle = document.querySelector("#voiceToggle");
 const serverVoiceToggle = document.querySelector("#serverVoiceToggle");
 
 const maxHistoryMessages = 30;
-const maxVisionImageSide = 384;
-const visionImageQuality = 0.82;
+const maxVisionImageSide = 256;
+const visionImageQuality = 0.72;
 let ttsEnabled = false;
 let serverVoiceEnabled = false;
 let recognition = null;

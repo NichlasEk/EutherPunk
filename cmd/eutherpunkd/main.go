@@ -26,6 +26,8 @@ import (
 
 const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfiguration och praktisk felsokning. Svara pa samma sprak som anvandaren; om anvandaren skriver svenska eller spraket ar oklart, svara pa svenska. Var konkret, fraga innan destruktiva atgarder och prioritera sakra forslag."
 
+var visionSlots = make(chan struct{}, 1)
+
 //go:embed web/*
 var webFiles embed.FS
 
@@ -1427,6 +1429,12 @@ func messagesForChatModel(ctx context.Context, cfg serverConfig, messages []olla
 }
 
 func describeImagesForChat(ctx context.Context, cfg serverConfig, message ollamaMessage) (string, error) {
+	select {
+	case visionSlots <- struct{}{}:
+		defer func() { <-visionSlots }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	question := strings.TrimSpace(message.Content)
 	if question == "" {
 		question = "Vad ar det har?"
@@ -1437,7 +1445,7 @@ func describeImagesForChat(ctx context.Context, cfg serverConfig, message ollama
 		Content: "Fraga fran anvandaren: " + question + "\nBeskriv bilden pa svenska for en annan assistent.",
 		Images:  message.Images,
 	}}
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 	caption, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, visionMessages)
 	if err != nil {
