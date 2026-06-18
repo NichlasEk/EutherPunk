@@ -434,16 +434,21 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 
+		chatMessages, err := messagesForChatModel(r.Context(), cfg, messages)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
 		model := req.Model
 		if model == "" {
-			model = chatModel(cfg, messages)
+			model = cfg.model
 		}
 		system := req.System
 		if system == "" {
-			system = systemPromptForMessages(defaultSystemPrompt, messages)
+			system = systemPromptForMessages(defaultSystemPrompt, chatMessages)
 		}
 
-		answer, err := askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
+		answer, err := askOllama(r.Context(), cfg.ollamaURL, model, system, chatMessages)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
@@ -466,18 +471,23 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 
+		chatMessages, err := messagesForChatModel(r.Context(), cfg, messages)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
 		model := req.Model
 		if model == "" {
-			model = chatModel(cfg, messages)
+			model = cfg.model
 		}
 		system := req.System
 		if system == "" {
-			system = systemPromptForMessages(defaultSystemPrompt, messages)
+			system = systemPromptForMessages(defaultSystemPrompt, chatMessages)
 		}
 
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		if err := streamOllama(r.Context(), w, cfg.ollamaURL, model, system, messages); err != nil {
+		if err := streamOllama(r.Context(), w, cfg.ollamaURL, model, system, chatMessages); err != nil {
 			_ = json.NewEncoder(w).Encode(streamChunk{Model: model, Error: err.Error(), Done: true})
 		}
 	}
@@ -1387,11 +1397,57 @@ func systemPromptForMessages(base string, messages []ollamaMessage) string {
 	return base
 }
 
-func chatModel(cfg serverConfig, messages []ollamaMessage) string {
-	if cfg.visionModel != "" && messagesHaveImages(messages) {
-		return cfg.visionModel
+func messagesForChatModel(ctx context.Context, cfg serverConfig, messages []ollamaMessage) ([]ollamaMessage, error) {
+	if cfg.visionModel == "" || !messagesHaveImages(messages) {
+		return messages, nil
 	}
-	return cfg.model
+	out := make([]ollamaMessage, 0, len(messages))
+	for _, message := range messages {
+		if len(message.Images) == 0 {
+			out = append(out, message)
+			continue
+		}
+		caption, err := describeImagesForChat(ctx, cfg, message)
+		if err != nil {
+			return nil, err
+		}
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			content = "Anvandaren visade en bild."
+		}
+		if caption != "" {
+			content += "\n\nBildtolkning: " + caption
+		}
+		out = append(out, ollamaMessage{
+			Role:    message.Role,
+			Content: content,
+		})
+	}
+	return out, nil
+}
+
+func describeImagesForChat(ctx context.Context, cfg serverConfig, message ollamaMessage) (string, error) {
+	question := strings.TrimSpace(message.Content)
+	if question == "" {
+		question = "Vad ar det har?"
+	}
+	system := "Du ar ett bildtolkningssteg. Svara kort pa svenska. Beskriv vad som syns i bilden och namnge motivet om du kan, men gissa inte tvarsakert om du är osäker."
+	visionMessages := []ollamaMessage{{
+		Role:    "user",
+		Content: "Fraga fran anvandaren: " + question + "\nBeskriv bilden pa svenska for en annan assistent.",
+		Images:  message.Images,
+	}}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	caption, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, visionMessages)
+	if err != nil {
+		return "", fmt.Errorf("vision model failed: %w", err)
+	}
+	caption = strings.TrimSpace(caption)
+	if len(caption) > 1200 {
+		caption = caption[:1200]
+	}
+	return caption, nil
 }
 
 func messagesHaveImages(messages []ollamaMessage) bool {
