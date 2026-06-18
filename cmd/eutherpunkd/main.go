@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/NichlasEk/EutherPunk/internal/config"
@@ -28,8 +29,16 @@ const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfig
 
 const ollamaNumCtx = 4096
 
+const (
+	safeImageDefaultWidth  = 512
+	safeImageDefaultHeight = 512
+	safeImageDefaultSteps  = 4
+)
+
 //go:embed web/*
 var webFiles embed.FS
+
+var imageGenerationMu sync.Mutex
 
 type serverConfig struct {
 	addr           string
@@ -180,10 +189,11 @@ type streamChunk struct {
 }
 
 type ollamaChatRequest struct {
-	Model    string          `json:"model"`
-	Stream   bool            `json:"stream"`
-	Messages []ollamaMessage `json:"messages"`
-	Options  map[string]any  `json:"options,omitempty"`
+	Model     string          `json:"model"`
+	Stream    bool            `json:"stream"`
+	Messages  []ollamaMessage `json:"messages"`
+	Options   map[string]any  `json:"options,omitempty"`
+	KeepAlive any             `json:"keep_alive,omitempty"`
 }
 
 type ollamaMessage struct {
@@ -258,6 +268,7 @@ func main() {
 	mux.HandleFunc("GET /api/eutherpunk/conversations", handleConversationList(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/conversations/{id}", handleConversationGet(cfg))
 	mux.HandleFunc("PUT /api/eutherpunk/conversations/{id}", handleConversationPut(cfg))
+	mux.HandleFunc("DELETE /api/eutherpunk/conversations/{id}", handleConversationDelete(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/chat", handleChat(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/chat/stream", handleChatStream(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/tts", handleTTS(cfg))
@@ -288,11 +299,14 @@ func handleStatus(cfg serverConfig) http.HandlerFunc {
 				"language":       cfg.voice.Language,
 			},
 			"image": map[string]any{
-				"comfyui_url": cfg.image.ComfyUIURL,
-				"directory":   cfg.image.Directory,
-				"width":       cfg.image.DefaultWidth,
-				"height":      cfg.image.DefaultHeight,
-				"steps":       cfg.image.DefaultSteps,
+				"comfyui_url":       cfg.image.ComfyUIURL,
+				"directory":         cfg.image.Directory,
+				"configured_width":  cfg.image.DefaultWidth,
+				"configured_height": cfg.image.DefaultHeight,
+				"configured_steps":  cfg.image.DefaultSteps,
+				"default_width":     defaultImageDimension(0, cfg.image.DefaultWidth, safeImageDefaultWidth),
+				"default_height":    defaultImageDimension(0, cfg.image.DefaultHeight, safeImageDefaultHeight),
+				"default_steps":     defaultImageSteps(0, cfg.image.DefaultSteps),
 			},
 			"users": len(cfg.users),
 		})
@@ -419,6 +433,26 @@ func handleConversationPut(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, conversation)
+	}
+}
+
+func handleConversationDelete(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := requestUser(r, cfg)
+		id := safeID(r.PathValue("id"))
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("conversation id is required"))
+			return
+		}
+		if err := deleteConversation(cfg.chatDir, user, id); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				http.NotFound(w, r)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
 
@@ -565,6 +599,12 @@ func handleStoredImage(cfg serverConfig) http.HandlerFunc {
 
 func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !imageGenerationMu.TryLock() {
+			writeError(w, http.StatusTooManyRequests, errors.New("image generation is already running"))
+			return
+		}
+		defer imageGenerationMu.Unlock()
+
 		var req imageRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -578,6 +618,7 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 		if prompt := imagePromptFromContext(r.Context(), cfg, req); prompt != "" {
 			req.Prompt = prompt
 		}
+		releaseOllamaForImage(r.Context(), cfg)
 		out, err := generateWithComfyUI(r.Context(), cfg.image, requestUser(r, cfg), req)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
@@ -626,6 +667,64 @@ func cleanImagePrompt(prompt string) string {
 		prompt = prompt[:1200]
 	}
 	return strings.TrimSpace(prompt)
+}
+
+func releaseOllamaForImage(ctx context.Context, cfg serverConfig) {
+	models := uniqueStrings(cfg.model, cfg.visionModel)
+	for _, model := range models {
+		if err := unloadOllamaModel(ctx, cfg.ollamaURL, model); err != nil {
+			log.Printf("ollama unload %s before image generation failed: %v", model, err)
+		}
+	}
+}
+
+func unloadOllamaModel(ctx context.Context, ollamaURL, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	payload := map[string]any{
+		"model":      model,
+		"prompt":     "",
+		"stream":     false,
+		"keep_alive": 0,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(ollamaURL, "/")+"/api/generate", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ollama unload returned %s: %s", resp.Status, string(body))
+	}
+	return nil
+}
+
+func uniqueStrings(values ...string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func askOllama(ctx context.Context, ollamaURL, model, system string, messages []ollamaMessage) (string, error) {
@@ -808,14 +907,14 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 }
 
 func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
-	width := clampToStep(defaultInt(req.Width, image.DefaultWidth, 1024), 16, 2048, 16)
-	height := clampToStep(defaultInt(req.Height, image.DefaultHeight, 1024), 16, 2048, 16)
-	steps := defaultInt(req.Steps, image.DefaultSteps, 8)
+	width := clampToStep(defaultImageDimension(req.Width, image.DefaultWidth, safeImageDefaultWidth), 16, 1024, 16)
+	height := clampToStep(defaultImageDimension(req.Height, image.DefaultHeight, safeImageDefaultHeight), 16, 1024, 16)
+	steps := defaultImageSteps(req.Steps, image.DefaultSteps)
 	if steps < 1 {
 		steps = 1
 	}
-	if steps > 30 {
-		steps = 30
+	if steps > 12 {
+		steps = 12
 	}
 	seed := req.Seed
 	if seed == 0 {
@@ -872,6 +971,26 @@ func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]a
 			"images": []any{"8", 0},
 		}),
 	}, nil
+}
+
+func defaultImageDimension(requested, configured, fallback int) int {
+	if requested > 0 {
+		return requested
+	}
+	if configured > 0 && configured < fallback {
+		return configured
+	}
+	return fallback
+}
+
+func defaultImageSteps(requested, configured int) int {
+	if requested > 0 {
+		return requested
+	}
+	if configured > 0 && configured < safeImageDefaultSteps {
+		return configured
+	}
+	return safeImageDefaultSteps
 }
 
 func comfyNode(classType string, inputs map[string]any) map[string]any {
@@ -1038,6 +1157,10 @@ func writeConversation(root string, conversation storedConversation) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func deleteConversation(root, user, id string) error {
+	return os.Remove(conversationPath(root, user, id))
 }
 
 func conversationPath(root, user, id string) string {

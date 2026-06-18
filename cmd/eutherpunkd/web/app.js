@@ -105,6 +105,30 @@ async function saveActiveConversation() {
   renderTitle();
 }
 
+async function deleteStoredConversation(id) {
+  const response = await fetch(`/api/eutherpunk/conversations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  conversations = conversations.filter((conversation) => conversation.id !== id);
+  if (id === activeConversationId) {
+    startNewConversation();
+    return;
+  }
+  renderConversationList();
+}
+
+async function confirmAndDeleteConversation(id) {
+  const conversation = conversations.find((item) => item.id === id);
+  const title = conversation?.title || "chatten";
+  if (!globalThis.confirm(`Ta bort "${title}"?`)) {
+    return;
+  }
+  await deleteStoredConversation(id);
+}
+
 function upsertConversationSummary(conversation) {
   const summary = {
     id: conversation.id,
@@ -125,25 +149,31 @@ function upsertConversationSummary(conversation) {
 function renderConversationList() {
   conversationListEl.replaceChildren();
   if (conversations.length === 0) {
-    const empty = document.createElement("button");
-    empty.type = "button";
-    empty.className = "conversationItem";
-    empty.disabled = true;
+    const empty = document.createElement("div");
+    empty.className = "conversationItem is-empty";
     empty.innerHTML = "<strong>Ingen historik än</strong><small>Skriv första frågan</small>";
     conversationListEl.appendChild(empty);
     return;
   }
   for (const conversation of conversations) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `conversationItem${conversation.id === activeConversationId ? " is-active" : ""}`;
-    button.dataset.conversationId = conversation.id;
+    const item = document.createElement("div");
+    item.className = `conversationItem${conversation.id === activeConversationId ? " is-active" : ""}`;
+    item.dataset.conversationId = conversation.id;
+    item.tabIndex = 0;
+    item.role = "button";
     const title = document.createElement("strong");
     title.textContent = conversation.title || "Ny chat";
     const meta = document.createElement("small");
     meta.textContent = conversationDate(conversation.updated_at);
-    button.append(title, meta);
-    conversationListEl.appendChild(button);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "conversationDelete";
+    deleteButton.dataset.deleteConversationId = conversation.id;
+    deleteButton.title = "Ta bort chat";
+    deleteButton.setAttribute("aria-label", `Ta bort ${conversation.title || "chat"}`);
+    deleteButton.textContent = "×";
+    item.append(title, meta, deleteButton);
+    conversationListEl.appendChild(item);
   }
 }
 
@@ -484,12 +514,50 @@ form.addEventListener("submit", async (event) => {
 });
 
 conversationListEl.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-conversation-id]");
-  if (!button) {
+  const deleteButton = event.target.closest("[data-delete-conversation-id]");
+  const item = event.target.closest("[data-conversation-id]");
+  if (!item) {
     return;
   }
   try {
-    await openConversation(button.dataset.conversationId);
+    if (deleteButton) {
+      await confirmAndDeleteConversation(deleteButton.dataset.deleteConversationId);
+      return;
+    }
+    await openConversation(item.dataset.conversationId);
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  }
+});
+
+conversationListEl.addEventListener("contextmenu", async (event) => {
+  const item = event.target.closest("[data-conversation-id]");
+  if (!item) {
+    return;
+  }
+  event.preventDefault();
+  try {
+    await confirmAndDeleteConversation(item.dataset.conversationId);
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  }
+});
+
+conversationListEl.addEventListener("keydown", async (event) => {
+  if (!["Delete", "Backspace", "Enter", " "].includes(event.key)) {
+    return;
+  }
+  const item = event.target.closest("[data-conversation-id]");
+  if (!item) {
+    return;
+  }
+  event.preventDefault();
+  try {
+    if (event.key === "Delete" || event.key === "Backspace") {
+      await confirmAndDeleteConversation(item.dataset.conversationId);
+      return;
+    }
+    await openConversation(item.dataset.conversationId);
   } catch (error) {
     addMessage("assistant", `Fel: ${error.message}`);
   }
