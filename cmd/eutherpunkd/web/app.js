@@ -339,11 +339,15 @@ function trimHistory() {
 }
 
 function modelMessages(messages) {
-  return messages.map((message) => ({
-    role: message.role,
-    content: message.content,
-    images: (message.images || []).map((image) => image.ollamaImage).filter(Boolean),
-  }));
+  return messages.map((message, index) => {
+    const isLatest = index === messages.length - 1;
+    const images = isLatest ? (message.images || []).map((image) => image.ollamaImage).filter(Boolean) : [];
+    return {
+      role: message.role,
+      content: message.content,
+      images,
+    };
+  });
 }
 
 function normalizeStoredMessages(messages) {

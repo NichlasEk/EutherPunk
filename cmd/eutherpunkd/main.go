@@ -1441,7 +1441,8 @@ func describeImagesForChat(ctx context.Context, cfg serverConfig, message ollama
 	defer cancel()
 	caption, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, visionMessages)
 	if err != nil {
-		return "", fmt.Errorf("vision model failed: %w", err)
+		log.Printf("vision model failed: %v", err)
+		return "", errors.New("visionmodellen svarade inte; prova igen om en stund eller starta om Ollama om datorn blev tung")
 	}
 	caption = strings.TrimSpace(caption)
 	if len(caption) > 1200 {
