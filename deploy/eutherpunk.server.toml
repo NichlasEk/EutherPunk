@@ -15,6 +15,13 @@ safe_mode = true
 [downloads]
 directory = "/home/nichlas/EutherPunk/dist/cli"
 
+[voice]
+eutherlink_url = "http://192.168.32.88:8765"
+model_backend = "grapheneos-matcha-en"
+language = "en"
+voice_instruction = "A warm, clear English voice with calm natural pacing."
+timeout_seconds = 45
+
 [eutheroxide]
 base_url = "http://192.168.32.186:8080"
 users_url = "http://192.168.32.186:8080/api/app/users"

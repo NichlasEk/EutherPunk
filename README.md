@@ -151,6 +151,7 @@ The intended client shape is a thin web/client layer backed by the EutherPunk AP
 - Browser TTS through `speechSynthesis` first, server-side TTS later.
 - Browser voice input through `SpeechRecognition` where supported, server-side STT later.
 - CLI downloads through `/downloads/eutherpunk-cli/{platform}`.
+- Server voice through `POST /api/eutherpunk/tts`, currently routed to EutherLink `grapheneos-matcha-en`.
 
 Current LAN test URL:
 

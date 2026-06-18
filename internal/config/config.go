@@ -15,6 +15,7 @@ type Config struct {
 	Server      ServerConfig          `json:"server"`
 	Agent       AgentConfig           `json:"agent"`
 	Downloads   DownloadsConfig       `json:"downloads"`
+	Voice       VoiceConfig           `json:"voice"`
 	EutherOxide EutherOxideConfig     `json:"eutheroxide"`
 	Tools       ToolsConfig           `json:"tools"`
 	Users       map[string]UserConfig `json:"users"`
@@ -37,6 +38,14 @@ type AgentConfig struct {
 
 type DownloadsConfig struct {
 	Directory string `json:"directory"`
+}
+
+type VoiceConfig struct {
+	EutherLinkURL    string `json:"eutherlink_url"`
+	ModelBackend     string `json:"model_backend"`
+	Language         string `json:"language"`
+	VoiceInstruction string `json:"voice_instruction"`
+	TimeoutSeconds   int    `json:"timeout_seconds"`
 }
 
 type EutherOxideConfig struct {
@@ -77,6 +86,13 @@ func Default() Config {
 		},
 		Downloads: DownloadsConfig{
 			Directory: "dist/cli",
+		},
+		Voice: VoiceConfig{
+			EutherLinkURL:    "http://192.168.32.88:8765",
+			ModelBackend:     "grapheneos-matcha-en",
+			Language:         "en",
+			VoiceInstruction: "A warm, clear English voice with calm natural pacing.",
+			TimeoutSeconds:   45,
 		},
 		EutherOxide: EutherOxideConfig{
 			BaseURL:      "http://192.168.32.186:8080",
@@ -228,6 +244,21 @@ func (cfg *Config) set(section, key, raw string) error {
 		default:
 			return unknown(section, key)
 		}
+	case "voice":
+		switch key {
+		case "eutherlink_url":
+			cfg.Voice.EutherLinkURL = mustString(raw)
+		case "model_backend":
+			cfg.Voice.ModelBackend = mustString(raw)
+		case "language":
+			cfg.Voice.Language = mustString(raw)
+		case "voice_instruction":
+			cfg.Voice.VoiceInstruction = mustString(raw)
+		case "timeout_seconds":
+			cfg.Voice.TimeoutSeconds = mustInt(raw)
+		default:
+			return unknown(section, key)
+		}
 	case "tools":
 		switch key {
 		case "allow_read":
@@ -296,6 +327,14 @@ func mustString(raw string) string {
 
 func mustBool(raw string) bool {
 	return strings.EqualFold(strings.TrimSpace(raw), "true")
+}
+
+func mustInt(raw string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 func unknown(section, key string) error {

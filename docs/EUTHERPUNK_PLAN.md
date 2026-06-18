@@ -133,6 +133,7 @@ TTS bör återanvända befintliga EutherLink/EutherBooks-erfarenheter i stället
 Första webbröstläget kan börja tunnare:
 
 - `speechSynthesis` i browsern för TTS
+- `POST /api/eutherpunk/tts` för serverröst via EutherLink GrapheneOS Matcha
 - `SpeechRecognition` i browsern för voice-to-text där det stöds
 - server-side STT/TTS senare när vi vill ha samma kvalitet på alla klienter
 

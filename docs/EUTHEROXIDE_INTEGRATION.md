@@ -60,6 +60,7 @@ http://192.168.32.186:8080/api/eutherpunk/models
 http://192.168.32.186:8080/api/eutherpunk/users
 http://192.168.32.186:8080/api/eutherpunk/chat
 http://192.168.32.186:8080/api/eutherpunk/chat/stream
+http://192.168.32.186:8080/api/eutherpunk/tts
 http://192.168.32.186:8080/downloads/eutherpunk-cli/linux-amd64
 ```
 

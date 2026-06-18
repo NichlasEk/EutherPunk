@@ -27,11 +27,13 @@ fi
 ssh_cmd "mkdir -p '$REMOTE_ROOT/bin' '$REMOTE_ROOT/dist/cli' '$REMOTE_CONFIG_DIR' '$SERVICE_DIR'"
 
 scp_to "$ROOT/dist/cli/eutherpunk-linux-amd64" "$REMOTE_ROOT/dist/cli/eutherpunk-linux-amd64"
-scp_to "$ROOT/dist/cli/eutherpunkd-linux-amd64" "$REMOTE_ROOT/bin/eutherpunkd"
+scp_to "$ROOT/dist/cli/eutherpunkd-linux-amd64" "$REMOTE_ROOT/bin/eutherpunkd.new"
 scp_to "$ROOT/deploy/eutherpunk.server.toml" "$REMOTE_CONFIG_DIR/config.toml"
 scp_to "$ROOT/deploy/eutherpunkd.service" "$SERVICE_DIR/eutherpunkd.service"
 
-ssh_cmd "chmod +x '$REMOTE_ROOT/bin/eutherpunkd' '$REMOTE_ROOT/dist/cli/eutherpunk-linux-amd64'"
+ssh_cmd "chmod +x '$REMOTE_ROOT/bin/eutherpunkd.new' '$REMOTE_ROOT/dist/cli/eutherpunk-linux-amd64'"
+ssh_cmd "systemctl --user stop eutherpunkd.service || true"
+ssh_cmd "mv '$REMOTE_ROOT/bin/eutherpunkd.new' '$REMOTE_ROOT/bin/eutherpunkd'"
 ssh_cmd "systemctl --user daemon-reload && systemctl --user enable --now eutherpunkd.service"
 ssh_cmd "systemctl --user --no-pager status eutherpunkd.service"
 ssh_cmd "curl -fsS http://127.0.0.1:8787/api/eutherpunk/status"

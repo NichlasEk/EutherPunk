@@ -32,6 +32,7 @@ type serverConfig struct {
 	configPath     string
 	downloadsDir   string
 	eutherOxideURL string
+	voice          config.VoiceConfig
 	users          map[string]config.UserConfig
 }
 
@@ -39,6 +40,14 @@ type chatRequest struct {
 	Message string `json:"message"`
 	Model   string `json:"model,omitempty"`
 	System  string `json:"system,omitempty"`
+}
+
+type ttsRequest struct {
+	Text               string `json:"text"`
+	Language           string `json:"language,omitempty"`
+	VoiceInstruction   string `json:"voice_instruction,omitempty"`
+	ModelBackend       string `json:"model_backend,omitempty"`
+	MaxChunkCharacters int    `json:"max_chunk_chars,omitempty"`
 }
 
 type chatResponse struct {
@@ -71,6 +80,15 @@ type ollamaChatResponse struct {
 	Error   string        `json:"error,omitempty"`
 }
 
+type eutherLinkJob struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	StatusURL string `json:"status_url"`
+	AudioURL  string `json:"audio_url"`
+	Error     string `json:"error,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 func main() {
 	appConfig, err := config.Load("")
 	if err != nil {
@@ -84,6 +102,7 @@ func main() {
 		configPath:     appConfig.Path,
 		downloadsDir:   appConfig.Downloads.Directory,
 		eutherOxideURL: appConfig.EutherOxide.UsersURL,
+		voice:          appConfig.Voice,
 		users:          appConfig.Users,
 	}
 
@@ -96,6 +115,7 @@ func main() {
 	mux.HandleFunc("GET /api/eutherpunk/users", handleUsers(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/chat", handleChat(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/chat/stream", handleChatStream(cfg))
+	mux.HandleFunc("POST /api/eutherpunk/tts", handleTTS(cfg))
 	mux.HandleFunc("GET /downloads/eutherpunk-cli/{platform}", handleCLIDownload(cfg))
 
 	log.Printf("eutherpunkd listening on %s, ollama=%s, model=%s", cfg.addr, cfg.ollamaURL, cfg.model)
@@ -113,7 +133,12 @@ func handleStatus(cfg serverConfig) http.HandlerFunc {
 			"ollama_url": cfg.ollamaURL,
 			"config":     cfg.configPath,
 			"downloads":  cfg.downloadsDir,
-			"users":      len(cfg.users),
+			"voice": map[string]any{
+				"eutherlink_url": cfg.voice.EutherLinkURL,
+				"model_backend":  cfg.voice.ModelBackend,
+				"language":       cfg.voice.Language,
+			},
+			"users": len(cfg.users),
 		})
 	}
 }
@@ -253,6 +278,30 @@ func handleCLIDownload(cfg serverConfig) http.HandlerFunc {
 	}
 }
 
+func handleTTS(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req ttsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req.Text = strings.TrimSpace(req.Text)
+		if req.Text == "" {
+			writeError(w, http.StatusBadRequest, errors.New("text is required"))
+			return
+		}
+		audio, err := synthesizeWithEutherLink(r.Context(), cfg.voice, req)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/wav")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(audio)
+	}
+}
+
 func askOllama(ctx context.Context, ollamaURL, model, system, message string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -303,6 +352,149 @@ func askOllama(ctx context.Context, ollamaURL, model, system, message string) (s
 		return "", errors.New(out.Error)
 	}
 	return out.Message.Content, nil
+}
+
+func synthesizeWithEutherLink(ctx context.Context, voice config.VoiceConfig, req ttsRequest) ([]byte, error) {
+	baseURL := strings.TrimRight(voice.EutherLinkURL, "/")
+	if baseURL == "" {
+		return nil, errors.New("voice.eutherlink_url is not configured")
+	}
+	timeout := time.Duration(voice.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	language := req.Language
+	if language == "" {
+		language = voice.Language
+	}
+	if language == "" {
+		language = "en"
+	}
+	modelBackend := req.ModelBackend
+	if modelBackend == "" {
+		modelBackend = voice.ModelBackend
+	}
+	if modelBackend == "" {
+		modelBackend = "grapheneos-matcha-en"
+	}
+	instruction := req.VoiceInstruction
+	if instruction == "" {
+		instruction = voice.VoiceInstruction
+	}
+	if instruction == "" {
+		instruction = "A warm, clear English voice with calm natural pacing."
+	}
+	maxChunkChars := req.MaxChunkCharacters
+	if maxChunkChars <= 0 {
+		maxChunkChars = 300
+	}
+
+	payload := map[string]any{
+		"text":              req.Text,
+		"voice_instruction": instruction,
+		"language":          language,
+		"output_format":     "wav",
+		"model_backend":     modelBackend,
+		"max_chunk_chars":   maxChunkChars,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/tts/jobs", bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("EutherLink returned %s: %s", resp.Status, string(body))
+	}
+
+	var job eutherLinkJob
+	if err := json.Unmarshal(body, &job); err != nil {
+		return nil, err
+	}
+	if job.StatusURL == "" || job.AudioURL == "" {
+		return nil, errors.New("EutherLink response missing status_url or audio_url")
+	}
+	statusURL := absoluteWorkerURL(baseURL, job.StatusURL)
+	audioURL := absoluteWorkerURL(baseURL, job.AudioURL)
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			status, err := fetchEutherLinkJob(ctx, statusURL)
+			if err != nil {
+				return nil, err
+			}
+			switch status.Status {
+			case "done":
+				if status.AudioURL != "" {
+					audioURL = absoluteWorkerURL(baseURL, status.AudioURL)
+				}
+				return fetchBytes(ctx, audioURL)
+			case "failed":
+				detail := status.Error
+				if detail == "" {
+					detail = status.Message
+				}
+				if detail == "" {
+					detail = "EutherLink TTS job failed"
+				}
+				return nil, errors.New(detail)
+			}
+		}
+	}
+}
+
+func fetchEutherLinkJob(ctx context.Context, url string) (eutherLinkJob, error) {
+	var job eutherLinkJob
+	body, _, err := proxyGet(ctx, url)
+	if err != nil {
+		return job, err
+	}
+	if err := json.Unmarshal(body, &job); err != nil {
+		return job, err
+	}
+	return job, nil
+}
+
+func fetchBytes(ctx context.Context, url string) ([]byte, error) {
+	body, status, err := proxyGet(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("download returned HTTP %d", status)
+	}
+	return body, nil
+}
+
+func absoluteWorkerURL(baseURL, value string) string {
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	if strings.HasPrefix(value, "/") {
+		return baseURL + value
+	}
+	return baseURL + "/" + value
 }
 
 func streamOllama(ctx context.Context, w io.Writer, ollamaURL, model, system, message string) error {

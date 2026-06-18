@@ -4,9 +4,12 @@ const form = document.querySelector("#chatForm");
 const promptEl = document.querySelector("#prompt");
 const micButton = document.querySelector("#micButton");
 const voiceToggle = document.querySelector("#voiceToggle");
+const serverVoiceToggle = document.querySelector("#serverVoiceToggle");
 
 let ttsEnabled = false;
+let serverVoiceEnabled = false;
 let recognition = null;
+let activeAudio = null;
 
 async function loadStatus() {
   try {
@@ -27,14 +30,42 @@ function addMessage(role, text = "") {
   return node;
 }
 
-function speak(text) {
-  if (!ttsEnabled || !("speechSynthesis" in window) || !text.trim()) {
+async function speak(text) {
+  if (!ttsEnabled || !text.trim()) {
+    return;
+  }
+  if (serverVoiceEnabled) {
+    await speakWithServerVoice(text);
+    return;
+  }
+  if (!("speechSynthesis" in window)) {
     return;
   }
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "sv-SE";
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
+}
+
+async function speakWithServerVoice(text) {
+  const response = await fetch("/api/eutherpunk/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || response.statusText);
+  }
+  const audioBlob = await response.blob();
+  const url = URL.createObjectURL(audioBlob);
+  if (activeAudio) {
+    activeAudio.pause();
+    URL.revokeObjectURL(activeAudio.src);
+  }
+  activeAudio = new Audio(url);
+  activeAudio.onended = () => URL.revokeObjectURL(url);
+  await activeAudio.play();
 }
 
 async function sendPrompt(prompt) {
@@ -81,7 +112,7 @@ async function sendPrompt(prompt) {
     }
   }
 
-  speak(fullText);
+  await speak(fullText);
 }
 
 form.addEventListener("submit", async (event) => {
@@ -105,6 +136,15 @@ form.addEventListener("submit", async (event) => {
 voiceToggle.addEventListener("click", () => {
   ttsEnabled = !ttsEnabled;
   voiceToggle.textContent = ttsEnabled ? "TTS på" : "TTS av";
+});
+
+serverVoiceToggle.addEventListener("click", () => {
+  serverVoiceEnabled = !serverVoiceEnabled;
+  serverVoiceToggle.textContent = serverVoiceEnabled ? "Serverröst på" : "Serverröst av";
+  if (serverVoiceEnabled && !ttsEnabled) {
+    ttsEnabled = true;
+    voiceToggle.textContent = "TTS på";
+  }
 });
 
 function setupSpeechRecognition() {
