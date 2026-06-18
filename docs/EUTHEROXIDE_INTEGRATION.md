@@ -47,7 +47,45 @@ The script installs:
 /home/nichlas/.config/systemd/user/eutherpunkd.service
 ```
 
-## EutherOxide Proxy
+## Separate Caddy Front
+
+The safer first deployment is to keep EutherPunk separate from the EutherHost request loop and let Caddy proxy selected routes directly to `eutherpunkd`.
+
+LAN routes currently intended for Caddy:
+
+```text
+http://192.168.32.186:8080/eutherpunk
+http://192.168.32.186:8080/api/eutherpunk/status
+http://192.168.32.186:8080/api/eutherpunk/models
+http://192.168.32.186:8080/api/eutherpunk/users
+http://192.168.32.186:8080/api/eutherpunk/chat
+http://192.168.32.186:8080/api/eutherpunk/chat/stream
+http://192.168.32.186:8080/downloads/eutherpunk-cli/linux-amd64
+```
+
+Caddy handles to add before the general EutherHost fallback in the LAN `:8080` block:
+
+```caddy
+handle /eutherpunk* {
+	reverse_proxy 127.0.0.1:8787
+}
+
+handle /api/eutherpunk* {
+	reverse_proxy 127.0.0.1:8787
+}
+
+handle /web/* {
+	reverse_proxy 127.0.0.1:8787
+}
+
+handle /downloads/eutherpunk-cli* {
+	reverse_proxy 127.0.0.1:8787
+}
+```
+
+This avoids the EutherHost active request guard. A previous EutherHost in-process proxy attempt caused `server busy` on mobile login because closed Caddy upstream sockets accumulated in EutherHost.
+
+## EutherOxide Proxy Later
 
 The server-side EutherOxide checkout is the source of truth. Add proxy handlers in root `src/main.rs`, not under a Tauri path.
 
@@ -72,6 +110,8 @@ Keep EutherPunk responsible for:
 - per-user model/safety policy
 - chat streaming
 - thin web client assets
+
+Do not reintroduce this proxy path until EutherHost request lifecycle handling has been hardened and tested with mobile login/browser connection churn.
 
 ## Verification
 

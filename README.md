@@ -143,14 +143,20 @@ OLLAMA_URL=http://127.0.0.1:11434
 
 ## Server Direction
 
-EutherOxide should expose EutherPunk through authenticated routes and downloads, while Ollama remains internal. Public traffic should go through EutherOxide or another trusted gateway, not directly to Ollama.
+EutherPunk currently runs as a separate service behind Caddy on the LAN. Ollama remains internal. Public traffic should go through a trusted gateway with auth, not directly to Ollama.
 
-The intended public shape is a thin EutherOxide-hosted web/client layer backed by the EutherPunk API:
+The intended client shape is a thin web/client layer backed by the EutherPunk API:
 
 - Browser text chat through `POST /api/eutherpunk/chat/stream`.
 - Browser TTS through `speechSynthesis` first, server-side TTS later.
 - Browser voice input through `SpeechRecognition` where supported, server-side STT later.
 - CLI downloads through `/downloads/eutherpunk-cli/{platform}`.
+
+Current LAN test URL:
+
+```text
+http://192.168.32.186:8080/eutherpunk
+```
 
 ## Deploy To EutherOxide Host
 
@@ -173,4 +179,4 @@ The deploy script installs a user-level `eutherpunkd.service` and verifies:
 http://127.0.0.1:8787/api/eutherpunk/status
 ```
 
-EutherOxide should then proxy public and LAN routes to `127.0.0.1:8787`. See [docs/EUTHEROXIDE_INTEGRATION.md](docs/EUTHEROXIDE_INTEGRATION.md).
+Caddy should proxy LAN routes directly to `127.0.0.1:8787`. See [docs/EUTHEROXIDE_INTEGRATION.md](docs/EUTHEROXIDE_INTEGRATION.md).
