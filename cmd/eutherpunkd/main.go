@@ -35,6 +35,8 @@ const (
 	safeImageDefaultHeight = 512
 	safeImageDefaultSteps  = 4
 	maxComfySeed           = 1<<31 - 1
+	senseNovaGGUF          = "SenseNova-U1-8B-MoT-8step-Q4_K_S.gguf"
+	senseNovaLoRA          = "SenseNova-U1-8B-MoT-LoRA-8step-V1.0.safetensors"
 )
 
 //go:embed web/*
@@ -397,12 +399,16 @@ func handleSettingsGet(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 		settings.Loras = knownLoras(settings.ImageLora)
+		senseNovaLabel := "SenseNova U1 8B"
+		if err := ensureSenseNovaReady(r.Context(), cfg.image, "none"); err != nil {
+			senseNovaLabel = "SenseNova U1 8B (laddar)"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"user":     user,
 			"settings": settings,
 			"image_models": []map[string]string{
 				{"id": "z-image-turbo", "label": "Z-Image Turbo"},
-				{"id": "sensenova-u1-8b", "label": "SenseNova U1 8B"},
+				{"id": "sensenova-u1-8b", "label": senseNovaLabel},
 			},
 		})
 	}
@@ -708,6 +714,12 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 		if strings.TrimSpace(req.Lora) == "" {
 			req.Lora = settings.ImageLora
 		}
+		if normalizeImageModel(req.ImageModel) != "sensenova-u1-8b" {
+			req.Lora = "none"
+		} else if err := ensureSenseNovaReady(r.Context(), cfg.image, req.Lora); err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
 		if prompt := imagePromptFromContext(r.Context(), cfg, req); prompt != "" {
 			req.Prompt = prompt
 		}
@@ -1008,6 +1020,39 @@ func buildImagePrompt(image config.ImageConfig, req imageRequest) (map[string]an
 	}
 }
 
+func ensureSenseNovaReady(ctx context.Context, image config.ImageConfig, lora string) error {
+	baseURL := strings.TrimRight(image.ComfyUIURL, "/")
+	if baseURL == "" {
+		return errors.New("image.comfyui_url is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/object_info/SenseNova_SM_Model", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("SenseNova ar inte redo: ComfyUI svarar inte: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("SenseNova ar inte redo: ComfyUI returned %s", resp.Status)
+	}
+	if !bytes.Contains(body, []byte(strconv.Quote(senseNovaGGUF))) {
+		return fmt.Errorf("SenseNova laddas fortfarande: %s saknas i ComfyUI", senseNovaGGUF)
+	}
+	lora = normalizeLora(lora)
+	if lora != "" && lora != "none" && !bytes.Contains(body, []byte(strconv.Quote(lora))) {
+		return fmt.Errorf("SenseNova-LoRA saknas i ComfyUI: %s", lora)
+	}
+	return nil
+}
+
 func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
 	width := clampToStep(defaultImageDimension(req.Width, image.DefaultWidth, safeImageDefaultWidth), 16, 1024, 16)
 	height := clampToStep(defaultImageDimension(req.Height, image.DefaultHeight, safeImageDefaultHeight), 16, 1024, 16)
@@ -1102,7 +1147,7 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 	return map[string]any{
 		"1": comfyNode("SenseNova_SM_Model", map[string]any{
 			"diffusion_models": "none",
-			"gguf":             "SenseNova-U1-8B-MoT-8step-Q4_K_S.gguf",
+			"gguf":             senseNovaGGUF,
 			"lora":             lora,
 			"attn_backend":     "auto",
 		}),
@@ -1370,7 +1415,7 @@ func normalizeLora(value string) string {
 }
 
 func knownLoras(selected string) []string {
-	out := []string{"none", "SenseNova-U1-8B-MoT-LoRA-8step-V1.0.safetensors"}
+	out := []string{"none", senseNovaLoRA}
 	selected = normalizeLora(selected)
 	if selected != "none" && !stringInSlice(selected, out) {
 		out = append(out, selected)

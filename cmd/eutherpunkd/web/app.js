@@ -90,7 +90,10 @@ function renderSettingsForm() {
   visionModelInput.value = userSettings.vision_model || "";
   voiceBackendInput.value = userSettings.voice_backend || "";
   renderOptions(imageModelSelect, imageModels.map((model) => [model.id, model.label]), userSettings.image_model);
-  renderOptions(imageLoraSelect, imageLoras.map((lora) => [lora, lora === "none" ? "Ingen" : lora]), userSettings.image_lora);
+  const selectedImageModel = imageModelSelect.value || userSettings.image_model;
+  const selectedLora = selectedImageModel === "sensenova-u1-8b" ? userSettings.image_lora : "none";
+  renderOptions(imageLoraSelect, imageLoras.map((lora) => [lora, lora === "none" ? "Ingen" : lora]), selectedLora);
+  imageLoraSelect.disabled = selectedImageModel !== "sensenova-u1-8b";
 }
 
 function renderOptions(select, options, selectedValue) {
@@ -107,11 +110,12 @@ function renderOptions(select, options, selectedValue) {
 }
 
 async function saveSettings() {
+  const imageModel = imageModelSelect.value;
   const payload = {
     chat_model: chatModelInput.value.trim(),
     vision_model: visionModelInput.value.trim(),
-    image_model: imageModelSelect.value,
-    image_lora: imageLoraSelect.value,
+    image_model: imageModel,
+    image_lora: imageModel === "sensenova-u1-8b" ? imageLoraSelect.value : "none",
     voice_backend: voiceBackendInput.value.trim(),
   };
   const response = await fetch("/api/eutherpunk/settings", {
@@ -748,6 +752,13 @@ serverVoiceToggle.addEventListener("click", () => {
 settingsButton.addEventListener("click", () => {
   renderSettingsForm();
   settingsDialog.showModal();
+});
+
+imageModelSelect.addEventListener("change", () => {
+  if (imageModelSelect.value !== "sensenova-u1-8b") {
+    imageLoraSelect.value = "none";
+  }
+  imageLoraSelect.disabled = imageModelSelect.value !== "sensenova-u1-8b";
 });
 
 settingsCloseButton.addEventListener("click", () => {
