@@ -286,8 +286,8 @@ async function sendPrompt(prompt, images = []) {
   await speak(fullText);
 }
 
-async function generateImage(prompt) {
-  const userMessage = { role: "user", content: `/bild ${prompt}`, images: [] };
+async function generateImage(prompt, displayText = "") {
+  const userMessage = { role: "user", content: displayText || `/bild ${prompt}`, images: [] };
   addMessage("user", userMessage.content);
   const assistantNode = addMessage("assistant", "Genererar bild...");
   conversationMessages.push(userMessage);
@@ -298,7 +298,10 @@ async function generateImage(prompt) {
     const response = await fetch("/api/eutherpunk/images/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({
+        prompt,
+        context: modelMessages(conversationMessages.slice(-12)),
+      }),
     });
     const payload = await response.json();
     if (!response.ok) {
@@ -462,9 +465,9 @@ form.addEventListener("submit", async (event) => {
   renderImagePreview();
   form.querySelector("button[type='submit']").disabled = true;
   try {
-    const imagePrompt = parseImageCommand(prompt);
-    if (images.length === 0 && imagePrompt) {
-      await generateImage(imagePrompt);
+    const imageRequest = parseImageRequest(prompt);
+    if (images.length === 0 && imageRequest) {
+      await generateImage(imageRequest.prompt, imageRequest.displayText);
     } else {
       await sendPrompt(prompt, images);
     }
@@ -490,14 +493,56 @@ conversationListEl.addEventListener("click", async (event) => {
 
 newChatButton.addEventListener("click", startNewConversation);
 
-function parseImageCommand(prompt) {
+function parseImageRequest(prompt) {
   const trimmed = prompt.trim();
   for (const prefix of ["/bild ", "/image "]) {
     if (trimmed.toLowerCase().startsWith(prefix)) {
-      return trimmed.slice(prefix.length).trim();
+      const imagePrompt = trimmed.slice(prefix.length).trim();
+      return imagePrompt ? { prompt: imagePrompt, displayText: trimmed } : null;
     }
   }
-  return "";
+  if (!looksLikeImageGenerationRequest(trimmed)) {
+    return null;
+  }
+  return { prompt: trimmed, displayText: trimmed };
+}
+
+function looksLikeImageGenerationRequest(prompt) {
+  const normalized = normalizeIntentText(prompt);
+  if (!normalized) {
+    return false;
+  }
+  const directPrefixes = [
+    "generera en bild",
+    "skapa en bild",
+    "gora en bild",
+    "gor en bild",
+    "gör en bild",
+    "rita ",
+    "teckna ",
+    "make an image",
+    "generate an image",
+    "create an image",
+    "draw ",
+  ];
+  if (directPrefixes.some((prefix) => normalized.startsWith(normalizeIntentText(prefix)))) {
+    return true;
+  }
+  const conversationalPatterns = [
+    /\b(?:gor|gora|skapa|generera|rita|teckna)\b.{0,48}\b(?:bild|png|illustration|teckning)\b/,
+    /\b(?:jag vill ha|kan du fixa|kan du gora|kan du skapa)\b.{0,48}\b(?:bild|png|illustration|teckning)\b/,
+    /\b(?:make|generate|create|draw)\b.{0,48}\b(?:image|picture|png|illustration)\b/,
+  ];
+  return conversationalPatterns.some((pattern) => pattern.test(normalized));
+}
+
+function normalizeIntentText(value) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 promptEl.addEventListener("keydown", (event) => {

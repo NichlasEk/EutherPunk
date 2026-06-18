@@ -147,12 +147,13 @@ type ttsRequest struct {
 }
 
 type imageRequest struct {
-	Prompt         string `json:"prompt"`
-	NegativePrompt string `json:"negative_prompt,omitempty"`
-	Width          int    `json:"width,omitempty"`
-	Height         int    `json:"height,omitempty"`
-	Steps          int    `json:"steps,omitempty"`
-	Seed           uint64 `json:"seed,omitempty"`
+	Prompt         string        `json:"prompt"`
+	NegativePrompt string        `json:"negative_prompt,omitempty"`
+	Width          int           `json:"width,omitempty"`
+	Height         int           `json:"height,omitempty"`
+	Steps          int           `json:"steps,omitempty"`
+	Seed           uint64        `json:"seed,omitempty"`
+	Context        []chatMessage `json:"context,omitempty"`
 }
 
 type imageResponse struct {
@@ -549,6 +550,9 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("prompt is required"))
 			return
 		}
+		if prompt := imagePromptFromContext(r.Context(), cfg, req); prompt != "" {
+			req.Prompt = prompt
+		}
 		out, err := generateWithComfyUI(r.Context(), cfg.image, requestUser(r, cfg), req)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
@@ -556,6 +560,47 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+func imagePromptFromContext(ctx context.Context, cfg serverConfig, req imageRequest) string {
+	messages := requestMessages(chatRequest{Messages: req.Context})
+	if len(messages) == 0 {
+		return req.Prompt
+	}
+	system := "You convert a chat conversation into one concise English prompt for an image generator. Use the latest user request as the instruction, include relevant visual context from earlier messages or images, and return only the final image prompt with no markdown or explanations."
+	messages = append(messages, ollamaMessage{
+		Role:    "user",
+		Content: "Final image request: " + req.Prompt + "\nWrite the image generation prompt.",
+	})
+	model := cfg.model
+	if cfg.visionModel != "" && messagesHaveImages(messages) {
+		model = cfg.visionModel
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	prompt, err := askOllama(ctx, cfg.ollamaURL, model, system, messages)
+	if err != nil {
+		log.Printf("image prompt context rewrite failed: %v", err)
+		return req.Prompt
+	}
+	prompt = cleanImagePrompt(prompt)
+	if prompt == "" {
+		return req.Prompt
+	}
+	return prompt
+}
+
+func cleanImagePrompt(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	prompt = strings.Trim(prompt, "` \t\r\n")
+	prompt = strings.TrimPrefix(prompt, "json")
+	prompt = strings.TrimPrefix(prompt, "text")
+	prompt = strings.TrimSpace(prompt)
+	prompt = strings.Trim(prompt, `"'`)
+	if len(prompt) > 1200 {
+		prompt = prompt[:1200]
+	}
+	return strings.TrimSpace(prompt)
 }
 
 func askOllama(ctx context.Context, ollamaURL, model, system string, messages []ollamaMessage) (string, error) {
