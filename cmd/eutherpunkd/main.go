@@ -24,7 +24,7 @@ import (
 	"github.com/NichlasEk/EutherPunk/internal/config"
 )
 
-const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfiguration och praktisk felsokning. Var konkret, fraga innan destruktiva atgarder och prioritera sakra forslag."
+const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfiguration och praktisk felsokning. Svara pa samma sprak som anvandaren; om anvandaren skriver svenska eller spraket ar oklart, svara pa svenska. Var konkret, fraga innan destruktiva atgarder och prioritera sakra forslag."
 
 //go:embed web/*
 var webFiles embed.FS
@@ -440,7 +440,7 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		}
 		system := req.System
 		if system == "" {
-			system = defaultSystemPrompt
+			system = systemPromptForMessages(defaultSystemPrompt, messages)
 		}
 
 		answer, err := askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
@@ -472,7 +472,7 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 		}
 		system := req.System
 		if system == "" {
-			system = defaultSystemPrompt
+			system = systemPromptForMessages(defaultSystemPrompt, messages)
 		}
 
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -1378,6 +1378,13 @@ func requestMessages(req chatRequest) []ollamaMessage {
 		Content: req.Message,
 		Images:  compactStrings(req.Images),
 	}}
+}
+
+func systemPromptForMessages(base string, messages []ollamaMessage) string {
+	if messagesHaveImages(messages) {
+		return base + " Nar anvandaren visar en bild, beskriv och resonera om bilden pa anvandarens sprak. Anvand svenska bildord som apa, nasapa och trad nar de passar, men hitta inte pa saker du inte ser."
+	}
+	return base
 }
 
 func chatModel(cfg serverConfig, messages []ollamaMessage) string {
