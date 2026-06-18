@@ -1,0 +1,15 @@
+[Unit]
+Description=EutherPunk local AI gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherPunk
+Environment=EUTHERPUNK_CONFIG=/home/nichlas/.config/eutherpunk/config.toml
+ExecStart=/home/nichlas/EutherPunk/bin/eutherpunkd
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -151,3 +151,26 @@ The intended public shape is a thin EutherOxide-hosted web/client layer backed b
 - Browser TTS through `speechSynthesis` first, server-side TTS later.
 - Browser voice input through `SpeechRecognition` where supported, server-side STT later.
 - CLI downloads through `/downloads/eutherpunk-cli/{platform}`.
+
+## Deploy To EutherOxide Host
+
+The deployment target is the LAN server:
+
+```text
+192.168.32.186
+```
+
+Build and deploy after the SSH key is unlocked:
+
+```bash
+scripts/build.sh
+scripts/deploy-server.sh
+```
+
+The deploy script installs a user-level `eutherpunkd.service` and verifies:
+
+```text
+http://127.0.0.1:8787/api/eutherpunk/status
+```
+
+EutherOxide should then proxy public and LAN routes to `127.0.0.1:8787`. See [docs/EUTHEROXIDE_INTEGRATION.md](docs/EUTHEROXIDE_INTEGRATION.md).
