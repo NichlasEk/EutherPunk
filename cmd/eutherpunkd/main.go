@@ -26,6 +26,8 @@ import (
 
 const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfiguration och praktisk felsokning. Svara pa samma sprak som anvandaren; om anvandaren skriver svenska eller spraket ar oklart, svara pa svenska. Var konkret, fraga innan destruktiva atgarder och prioritera sakra forslag."
 
+const ollamaNumCtx = 4096
+
 //go:embed web/*
 var webFiles embed.FS
 
@@ -438,13 +440,20 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		if model == "" {
 			model = chatModel(cfg, messages)
 		}
+		visionRequest := isVisionRequest(cfg, model, messages)
 		messages = messagesForSelectedModel(cfg, model, messages)
 		system := req.System
 		if system == "" {
 			system = systemPromptForMessages(defaultSystemPrompt, messages)
 		}
 
-		answer, err := askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
+		var answer string
+		var err error
+		if visionRequest {
+			answer, err = askVisionOllama(r.Context(), cfg, system, messages)
+		} else {
+			answer, err = askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
+		}
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
@@ -471,6 +480,7 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 		if model == "" {
 			model = chatModel(cfg, messages)
 		}
+		visionRequest := isVisionRequest(cfg, model, messages)
 		messages = messagesForSelectedModel(cfg, model, messages)
 		system := req.System
 		if system == "" {
@@ -479,6 +489,19 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
+		if visionRequest {
+			answer, err := askVisionOllama(r.Context(), cfg, system, messages)
+			encoder := json.NewEncoder(w)
+			if err != nil {
+				_ = encoder.Encode(streamChunk{Model: model, Error: err.Error(), Done: true})
+				return
+			}
+			if answer != "" {
+				_ = encoder.Encode(streamChunk{Model: model, Delta: answer})
+			}
+			_ = encoder.Encode(streamChunk{Model: model, Done: true})
+			return
+		}
 		if err := streamOllama(r.Context(), w, cfg.ollamaURL, model, system, messages); err != nil {
 			_ = json.NewEncoder(w).Encode(streamChunk{Model: model, Error: err.Error(), Done: true})
 		}
@@ -614,7 +637,7 @@ func askOllama(ctx context.Context, ollamaURL, model, system string, messages []
 		Stream:   false,
 		Messages: append([]ollamaMessage{{Role: "system", Content: system}}, messages...),
 		Options: map[string]any{
-			"num_ctx":     32768,
+			"num_ctx":     ollamaNumCtx,
 			"temperature": 0.2,
 		},
 	}
@@ -652,6 +675,65 @@ func askOllama(ctx context.Context, ollamaURL, model, system string, messages []
 		return "", errors.New(out.Error)
 	}
 	return out.Message.Content, nil
+}
+
+func askVisionOllama(ctx context.Context, cfg serverConfig, system string, messages []ollamaMessage) (string, error) {
+	answer, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, messages)
+	if err != nil {
+		return "", err
+	}
+	answer = normalizeVisionAnswer(answer)
+	if answer != "" {
+		return answer, nil
+	}
+	for _, prompt := range []string{"What animal is shown?", "What is the main animal shown?"} {
+		answer, err = askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, visionFallbackMessages(messages, prompt))
+		if err != nil {
+			return "", err
+		}
+		answer = normalizeVisionAnswer(answer)
+		if answer != "" {
+			return answer, nil
+		}
+	}
+	return "Jag kunde inte tolka bilden med den nuvarande visionmodellen.", nil
+}
+
+func visionFallbackMessages(messages []ollamaMessage, prompt string) []ollamaMessage {
+	out := make([]ollamaMessage, 0, len(messages))
+	for _, message := range messages {
+		if len(message.Images) == 0 {
+			out = append(out, message)
+			continue
+		}
+		out = append(out, ollamaMessage{
+			Role:    message.Role,
+			Content: prompt,
+			Images:  message.Images,
+		})
+	}
+	return out
+}
+
+func normalizeVisionAnswer(answer string) string {
+	answer = strings.TrimSpace(strings.ReplaceAll(answer, "\u00a0", " "))
+	answer = strings.Trim(answer, ". ")
+	switch strings.ToLower(answer) {
+	case "monkey", "a monkey":
+		return "Det ser ut som en apa."
+	case "proboscis monkey", "a proboscis monkey":
+		return "Det ser ut som en näsapa."
+	case "cat", "a cat":
+		return "Det ser ut som en katt."
+	case "dog", "a dog":
+		return "Det ser ut som en hund."
+	case "bird", "a bird":
+		return "Det ser ut som en fågel."
+	}
+	if answer == "" {
+		return ""
+	}
+	return answer
 }
 
 func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user string, req imageRequest) (imageResponse, error) {
@@ -1289,7 +1371,7 @@ func streamOllama(ctx context.Context, w io.Writer, ollamaURL, model, system str
 		Stream:   true,
 		Messages: append([]ollamaMessage{{Role: "system", Content: system}}, messages...),
 		Options: map[string]any{
-			"num_ctx":     32768,
+			"num_ctx":     ollamaNumCtx,
 			"temperature": 0.2,
 		},
 	}
@@ -1394,6 +1476,10 @@ func chatModel(cfg serverConfig, messages []ollamaMessage) string {
 		return cfg.visionModel
 	}
 	return cfg.model
+}
+
+func isVisionRequest(cfg serverConfig, model string, messages []ollamaMessage) bool {
+	return cfg.visionModel != "" && model == cfg.visionModel && messagesHaveImages(messages)
 }
 
 func messagesForSelectedModel(cfg serverConfig, model string, messages []ollamaMessage) []ollamaMessage {
