@@ -87,7 +87,7 @@ ComfyUI custom node:
 
 Required model files:
 
-- `/home/nichlas/ai/ComfyUI/models/gguf/SenseNova-U1-8B-MoT-8step-Q6_K.gguf`
+- `/home/nichlas/ai/ComfyUI/models/gguf/SenseNova-U1-8B-MoT-8step-Q4_K_S.gguf`
 - `/home/nichlas/ai/ComfyUI/models/loras/SenseNova-U1-8B-MoT-LoRA-8step-V1.0.safetensors`
 
 The EutherPunk workflow uses these ComfyUI node classes:

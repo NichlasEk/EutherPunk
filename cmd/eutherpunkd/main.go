@@ -1102,7 +1102,7 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 	return map[string]any{
 		"1": comfyNode("SenseNova_SM_Model", map[string]any{
 			"diffusion_models": "none",
-			"gguf":             "SenseNova-U1-8B-MoT-8step-Q6_K.gguf",
+			"gguf":             "SenseNova-U1-8B-MoT-8step-Q4_K_S.gguf",
 			"lora":             lora,
 			"attn_backend":     "auto",
 		}),
