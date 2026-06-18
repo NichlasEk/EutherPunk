@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ const (
 	safeImageDefaultWidth  = 512
 	safeImageDefaultHeight = 512
 	safeImageDefaultSteps  = 4
+	maxComfySeed           = 1<<31 - 1
 )
 
 //go:embed web/*
@@ -47,6 +49,7 @@ type serverConfig struct {
 	visionModel    string
 	configPath     string
 	chatDir        string
+	settingsDir    string
 	downloadsDir   string
 	eutherOxideURL string
 	voice          config.VoiceConfig
@@ -164,7 +167,18 @@ type imageRequest struct {
 	Height         int           `json:"height,omitempty"`
 	Steps          int           `json:"steps,omitempty"`
 	Seed           uint64        `json:"seed,omitempty"`
+	ImageModel     string        `json:"image_model,omitempty"`
+	Lora           string        `json:"lora,omitempty"`
 	Context        []chatMessage `json:"context,omitempty"`
+}
+
+type userSettings struct {
+	ChatModel    string   `json:"chat_model"`
+	VisionModel  string   `json:"vision_model"`
+	ImageModel   string   `json:"image_model"`
+	ImageLora    string   `json:"image_lora"`
+	VoiceBackend string   `json:"voice_backend"`
+	Loras        []string `json:"loras,omitempty"`
 }
 
 type imageResponse struct {
@@ -251,6 +265,7 @@ func main() {
 		visionModel:    envOr("EUTHERPUNK_VISION_MODEL", appConfig.Agent.VisionModel),
 		configPath:     appConfig.Path,
 		chatDir:        envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),
+		settingsDir:    envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)),
 		downloadsDir:   appConfig.Downloads.Directory,
 		eutherOxideURL: appConfig.EutherOxide.UsersURL,
 		voice:          appConfig.Voice,
@@ -265,6 +280,8 @@ func main() {
 	mux.HandleFunc("GET /api/eutherpunk/status", handleStatus(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/models", handleModels(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/users", handleUsers(cfg))
+	mux.HandleFunc("GET /api/eutherpunk/settings", handleSettingsGet(cfg))
+	mux.HandleFunc("PUT /api/eutherpunk/settings", handleSettingsPut(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/conversations", handleConversationList(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/conversations/{id}", handleConversationGet(cfg))
 	mux.HandleFunc("PUT /api/eutherpunk/conversations/{id}", handleConversationPut(cfg))
@@ -292,6 +309,7 @@ func handleStatus(cfg serverConfig) http.HandlerFunc {
 			"ollama_url":   cfg.ollamaURL,
 			"config":       cfg.configPath,
 			"chat_dir":     cfg.chatDir,
+			"settings_dir": cfg.settingsDir,
 			"downloads":    cfg.downloadsDir,
 			"voice": map[string]any{
 				"eutherlink_url": cfg.voice.EutherLinkURL,
@@ -366,6 +384,52 @@ func handleUsers(cfg serverConfig) http.HandlerFunc {
 			"source":            "toml",
 			"eutheroxide_users": cfg.eutherOxideURL,
 			"users":             cfg.users,
+		})
+	}
+}
+
+func handleSettingsGet(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := requestUser(r, cfg)
+		settings, err := readUserSettings(cfg, user)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		settings.Loras = knownLoras(settings.ImageLora)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user":     user,
+			"settings": settings,
+			"image_models": []map[string]string{
+				{"id": "z-image-turbo", "label": "Z-Image Turbo"},
+				{"id": "sensenova-u1-8b", "label": "SenseNova U1 8B"},
+			},
+		})
+	}
+}
+
+func handleSettingsPut(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := requestUser(r, cfg)
+		settings, err := readUserSettings(cfg, user)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		var incoming userSettings
+		if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		mergeUserSettings(&settings, incoming)
+		if err := writeUserSettings(cfg.settingsDir, user, settings); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		settings.Loras = knownLoras(settings.ImageLora)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user":     user,
+			"settings": settings,
 		})
 	}
 }
@@ -470,19 +534,23 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 
+		settings, err := readUserSettings(cfg, requestUser(r, cfg))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		model := req.Model
 		if model == "" {
-			model = chatModel(cfg, messages)
+			model = chatModel(settings, messages)
 		}
-		visionRequest := isVisionRequest(cfg, model, messages)
-		messages = messagesForSelectedModel(cfg, model, messages)
+		visionRequest := isVisionRequest(settings, model, messages)
+		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
 		if system == "" {
 			system = systemPromptForMessages(defaultSystemPrompt, messages)
 		}
 
 		var answer string
-		var err error
 		if visionRequest {
 			answer, err = askVisionOllama(r.Context(), cfg, system, messages)
 		} else {
@@ -510,12 +578,17 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 
+		settings, err := readUserSettings(cfg, requestUser(r, cfg))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		model := req.Model
 		if model == "" {
-			model = chatModel(cfg, messages)
+			model = chatModel(settings, messages)
 		}
-		visionRequest := isVisionRequest(cfg, model, messages)
-		messages = messagesForSelectedModel(cfg, model, messages)
+		visionRequest := isVisionRequest(settings, model, messages)
+		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
 		if system == "" {
 			system = systemPromptForMessages(defaultSystemPrompt, messages)
@@ -571,6 +644,14 @@ func handleTTS(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("text is required"))
 			return
 		}
+		settings, err := readUserSettings(cfg, requestUser(r, cfg))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if strings.TrimSpace(req.ModelBackend) == "" {
+			req.ModelBackend = settings.VoiceBackend
+		}
 		audio, err := synthesizeWithEutherLink(r.Context(), cfg.voice, req)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
@@ -615,11 +696,23 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("prompt is required"))
 			return
 		}
+		user := requestUser(r, cfg)
+		settings, err := readUserSettings(cfg, user)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if strings.TrimSpace(req.ImageModel) == "" {
+			req.ImageModel = settings.ImageModel
+		}
+		if strings.TrimSpace(req.Lora) == "" {
+			req.Lora = settings.ImageLora
+		}
 		if prompt := imagePromptFromContext(r.Context(), cfg, req); prompt != "" {
 			req.Prompt = prompt
 		}
 		releaseOllamaForImage(r.Context(), cfg)
-		out, err := generateWithComfyUI(r.Context(), cfg.image, requestUser(r, cfg), req)
+		out, err := generateWithComfyUI(r.Context(), cfg.image, user, req)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
 			return
@@ -848,7 +941,7 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	prompt, err := buildZImagePrompt(image, req)
+	prompt, err := buildImagePrompt(image, req)
 	if err != nil {
 		return out, err
 	}
@@ -904,6 +997,15 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 		User:      user,
 		URL:       "/api/eutherpunk/images/" + url.PathEscape(user) + "/" + url.PathEscape(storedName),
 	}, nil
+}
+
+func buildImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
+	switch normalizeImageModel(req.ImageModel) {
+	case "sensenova-u1-8b":
+		return buildSenseNovaPrompt(image, req)
+	default:
+		return buildZImagePrompt(image, req)
+	}
 }
 
 func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
@@ -969,6 +1071,66 @@ func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]a
 		}),
 		"9": comfyNode("PreviewImage", map[string]any{
 			"images": []any{"8", 0},
+		}),
+	}, nil
+}
+
+func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
+	steps := defaultImageSteps(req.Steps, image.DefaultSteps)
+	if steps < 1 {
+		steps = 1
+	}
+	if steps > 12 {
+		steps = 12
+	}
+	seed := req.Seed
+	if seed == 0 {
+		seed = uint64(time.Now().UnixNano())
+	}
+	lora := normalizeLora(req.Lora)
+	if lora == "" {
+		lora = "none"
+	}
+	targetPixels := "1:1"
+	width := defaultImageDimension(req.Width, image.DefaultWidth, safeImageDefaultWidth)
+	height := defaultImageDimension(req.Height, image.DefaultHeight, safeImageDefaultHeight)
+	if width > height {
+		targetPixels = "16:9"
+	} else if height > width {
+		targetPixels = "9:16"
+	}
+	return map[string]any{
+		"1": comfyNode("SenseNova_SM_Model", map[string]any{
+			"diffusion_models": "none",
+			"gguf":             "SenseNova-U1-8B-MoT-8step-Q6_K.gguf",
+			"lora":             lora,
+			"attn_backend":     "auto",
+		}),
+		"2": comfyNode("SenseNova_SM_Sampler", map[string]any{
+			"model":              []any{"1", 0},
+			"img_mode":           "edit",
+			"prompt":             req.Prompt,
+			"seed":               int(seed % maxComfySeed),
+			"steps":              steps,
+			"target_pixels":      targetPixels,
+			"cfg":                1.0,
+			"img_cfg":            1.0,
+			"timestep_shift":     3.0,
+			"batch_size":         1,
+			"prefetch_count":     0,
+			"interleave_max":     2,
+			"cfg_norm":           "none",
+			"enhance":            false,
+			"think_mode":         false,
+			"do_sample":          true,
+			"max_new_tokens":     1024,
+			"temperature":        0.7,
+			"top_p":              0.9,
+			"top_k":              0,
+			"repetition_penalty": 0.0,
+		}),
+		"3": comfyNode("PreviewImage", map[string]any{
+			"images": []any{"2", 0},
 		}),
 	}, nil
 }
@@ -1084,6 +1246,193 @@ func defaultChatDirectory(image config.ImageConfig) string {
 		base = "var"
 	}
 	return filepath.Join(base, "chats")
+}
+
+func defaultSettingsDirectory(image config.ImageConfig) string {
+	imageDir := imageDirectory(image)
+	base := filepath.Dir(imageDir)
+	if base == "." || base == string(filepath.Separator) {
+		base = "var"
+	}
+	return filepath.Join(base, "settings")
+}
+
+func defaultUserSettings(cfg serverConfig) userSettings {
+	return userSettings{
+		ChatModel:    cfg.model,
+		VisionModel:  cfg.visionModel,
+		ImageModel:   "z-image-turbo",
+		ImageLora:    "none",
+		VoiceBackend: cfg.voice.ModelBackend,
+	}
+}
+
+func readUserSettings(cfg serverConfig, user string) (userSettings, error) {
+	settings := defaultUserSettings(cfg)
+	data, err := os.ReadFile(userSettingsPath(cfg.settingsDir, user))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return settings, nil
+		}
+		return settings, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(stripTOMLComment(line))
+		if line == "" || strings.HasPrefix(line, "[") {
+			continue
+		}
+		key, raw, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value := mustTOMLString(strings.TrimSpace(raw))
+		switch key {
+		case "chat_model":
+			settings.ChatModel = value
+		case "vision_model":
+			settings.VisionModel = value
+		case "image_model":
+			settings.ImageModel = normalizeImageModel(value)
+		case "image_lora":
+			settings.ImageLora = normalizeLora(value)
+		case "voice_backend":
+			settings.VoiceBackend = value
+		}
+	}
+	mergeUserSettings(&settings, userSettings{})
+	return settings, nil
+}
+
+func writeUserSettings(root, user string, settings userSettings) error {
+	dir := settingsDirectory(root)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	path := userSettingsPath(root, user)
+	tmp := path + ".tmp"
+	var b strings.Builder
+	b.WriteString("# EutherPunk per-user settings\n")
+	writeTOMLString(&b, "chat_model", settings.ChatModel)
+	writeTOMLString(&b, "vision_model", settings.VisionModel)
+	writeTOMLString(&b, "image_model", normalizeImageModel(settings.ImageModel))
+	writeTOMLString(&b, "image_lora", normalizeLora(settings.ImageLora))
+	writeTOMLString(&b, "voice_backend", settings.VoiceBackend)
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o640); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func mergeUserSettings(settings *userSettings, incoming userSettings) {
+	if value := strings.TrimSpace(incoming.ChatModel); value != "" {
+		settings.ChatModel = value
+	}
+	if value := strings.TrimSpace(incoming.VisionModel); value != "" {
+		settings.VisionModel = value
+	}
+	if value := normalizeImageModel(incoming.ImageModel); value != "" {
+		settings.ImageModel = value
+	}
+	if incoming.ImageLora != "" {
+		settings.ImageLora = normalizeLora(incoming.ImageLora)
+	}
+	if value := strings.TrimSpace(incoming.VoiceBackend); value != "" {
+		settings.VoiceBackend = value
+	}
+	if settings.ChatModel == "" {
+		settings.ChatModel = "qwen3-coder:30b"
+	}
+	if settings.VisionModel == "" {
+		settings.VisionModel = "moondream:latest"
+	}
+	settings.ImageModel = normalizeImageModel(settings.ImageModel)
+	settings.ImageLora = normalizeLora(settings.ImageLora)
+}
+
+func normalizeImageModel(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "z-image", "z-image-turbo":
+		return "z-image-turbo"
+	case "sensenova", "sensenova-u1", "sensenova-u1-8b":
+		return "sensenova-u1-8b"
+	default:
+		return "z-image-turbo"
+	}
+}
+
+func normalizeLora(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "none" {
+		return "none"
+	}
+	return filepath.Base(value)
+}
+
+func knownLoras(selected string) []string {
+	out := []string{"none", "SenseNova-U1-8B-MoT-LoRA-8step-V1.0.safetensors"}
+	selected = normalizeLora(selected)
+	if selected != "none" && !stringInSlice(selected, out) {
+		out = append(out, selected)
+	}
+	return out
+}
+
+func stringInSlice(value string, values []string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func settingsDirectory(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		root = "var/settings"
+	}
+	if filepath.IsAbs(root) {
+		return filepath.Clean(root)
+	}
+	return filepath.Clean(root)
+}
+
+func userSettingsPath(root, user string) string {
+	return filepath.Join(settingsDirectory(root), safePathSegment(user)+".toml")
+}
+
+func stripTOMLComment(line string) string {
+	inString := false
+	escaped := false
+	for i, r := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '"':
+			inString = !inString
+		case r == '#' && !inString:
+			return line[:i]
+		}
+	}
+	return line
+}
+
+func mustTOMLString(raw string) string {
+	value, err := strconv.Unquote(raw)
+	if err != nil {
+		return strings.Trim(raw, `"`)
+	}
+	return strings.TrimSpace(value)
+}
+
+func writeTOMLString(b *strings.Builder, key, value string) {
+	b.WriteString(key)
+	b.WriteString(" = ")
+	b.WriteString(strconv.Quote(strings.TrimSpace(value)))
+	b.WriteByte('\n')
 }
 
 func listConversations(root, user string) ([]conversationSummary, error) {
@@ -1594,19 +1943,19 @@ func systemPromptForMessages(base string, messages []ollamaMessage) string {
 	return base
 }
 
-func chatModel(cfg serverConfig, messages []ollamaMessage) string {
-	if cfg.visionModel != "" && messagesHaveImages(messages) {
-		return cfg.visionModel
+func chatModel(settings userSettings, messages []ollamaMessage) string {
+	if settings.VisionModel != "" && messagesHaveImages(messages) {
+		return settings.VisionModel
 	}
-	return cfg.model
+	return settings.ChatModel
 }
 
-func isVisionRequest(cfg serverConfig, model string, messages []ollamaMessage) bool {
-	return cfg.visionModel != "" && model == cfg.visionModel && messagesHaveImages(messages)
+func isVisionRequest(settings userSettings, model string, messages []ollamaMessage) bool {
+	return settings.VisionModel != "" && model == settings.VisionModel && messagesHaveImages(messages)
 }
 
-func messagesForSelectedModel(cfg serverConfig, model string, messages []ollamaMessage) []ollamaMessage {
-	if model != cfg.visionModel || !messagesHaveImages(messages) {
+func messagesForSelectedModel(settings userSettings, model string, messages []ollamaMessage) []ollamaMessage {
+	if model != settings.VisionModel || !messagesHaveImages(messages) {
 		return messages
 	}
 	out := make([]ollamaMessage, 0, len(messages))

@@ -301,9 +301,72 @@ textarea {
   font: inherit;
 }
 
+input,
+select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
 .icon {
   width: 54px;
   padding: 0;
+}
+
+.settingsDialog {
+  width: min(460px, calc(100vw - 28px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.settingsDialog::backdrop {
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.settingsDialog form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.settingsDialog label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settingsHead,
+.settingsActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settingsHead strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+#settingsCloseButton {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  height: 34px;
+  padding: 0;
+}
+
+#settingsSaveButton {
+  margin-left: auto;
 }
 
 @media (max-width: 640px) {

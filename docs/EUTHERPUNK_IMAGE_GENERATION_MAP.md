@@ -6,7 +6,7 @@ This is the recovery map for EutherPunk chat image generation.
 
 1. Browser chat sends `/bild <prompt>` to EutherPunk.
 2. EutherPunk server receives `POST /api/eutherpunk/images/generate`.
-3. EutherPunk posts a temporary Z-Image workflow to ComfyUI at `http://192.168.32.88:8188/prompt`.
+3. EutherPunk posts a temporary image workflow to ComfyUI at `http://192.168.32.88:8188/prompt`.
 4. ComfyUI generates the image and exposes it through its `/history/{prompt_id}` and `/view` endpoints.
 5. EutherPunk downloads the PNG and stores it under `/home/nichlas/EutherPunk/var/images/<user>/`.
 6. Browser displays the stored server URL: `/api/eutherpunk/images/<user>/<file>.png`.
@@ -75,6 +75,41 @@ The EutherPunk workflow uses these ComfyUI node classes:
 - `VAEDecode`
 - `PreviewImage`
 
+## SenseNova U1 Assets
+
+SenseNova is optional and selectable per user in the EutherPunk settings dialog. Z-Image remains the default image model.
+
+ComfyUI custom node:
+
+```sh
+/home/nichlas/ai/ComfyUI/custom_nodes/ComfyUI_SenseNova_U1
+```
+
+Required model files:
+
+- `/home/nichlas/ai/ComfyUI/models/gguf/SenseNova-U1-8B-MoT-8step-Q6_K.gguf`
+- `/home/nichlas/ai/ComfyUI/models/loras/SenseNova-U1-8B-MoT-LoRA-8step-V1.0.safetensors`
+
+The EutherPunk workflow uses these ComfyUI node classes:
+
+- `SenseNova_SM_Model`
+- `SenseNova_SM_Sampler`
+- `PreviewImage`
+
+The SenseNova sampler is configured conservatively for the shared workstation:
+
+- `batch_size = 1`
+- `prefetch_count = 0`
+- `steps = 4` unless overridden by config/request
+- output target is selected from `1:1`, `16:9`, or `9:16` based on requested dimensions
+
+If the node rejects the workflow, verify node registration after a ComfyUI restart:
+
+```sh
+curl -fsS http://192.168.32.88:8188/object_info/SenseNova_SM_Model
+curl -fsS http://192.168.32.88:8188/object_info/SenseNova_SM_Sampler
+```
+
 ## EutherPunk Config
 
 Server config lives at `/home/nichlas/.config/eutherpunk/config.toml` and is deployed from `deploy/eutherpunk.server.toml`.
@@ -92,6 +127,22 @@ default_steps = 8
 ```
 
 Images are stored per user. Until EutherOxide forwards a user header, EutherPunk falls back to the single configured user when there is only one `[users.*]` entry.
+
+Per-user model settings are stored as TOML under the configured settings directory. By default this lives next to the image directory:
+
+```text
+/home/nichlas/EutherPunk/var/settings/<user>.toml
+```
+
+Currently supported keys:
+
+```toml
+chat_model = "qwen3-coder:30b"
+vision_model = "moondream:latest"
+image_model = "z-image-turbo"
+image_lora = "none"
+voice_backend = "grapheneos-matcha-en"
+```
 
 Supported future identity headers:
 
@@ -118,6 +169,7 @@ Expected result: JSON with `url`, `user`, `filename`, and `prompt_id`. The file 
 - `connection refused` to `127.0.0.1:11434` on server: local Ollama reverse tunnel is down.
 - `connection refused` to `192.168.32.88:8188`: ComfyUI is down or bound to the wrong address.
 - `EnvironmentNameNotFound: comfyui`: restore the `.venv` based ComfyUI service.
-- ComfyUI `node_errors`: verify `/object_info` still lists `UNETLoader`, `CLIPLoader`, `VAELoader`, `EmptySD3LatentImage`, `KSampler`, and `PreviewImage`.
+- ComfyUI `node_errors` for Z-Image: verify `/object_info` still lists `UNETLoader`, `CLIPLoader`, `VAELoader`, `EmptySD3LatentImage`, `KSampler`, and `PreviewImage`.
+- ComfyUI `node_errors` for SenseNova: verify `/object_info` still lists `SenseNova_SM_Model` and `SenseNova_SM_Sampler`, and that the GGUF and LoRA files exist in the paths above.
 - Browser still runs old JS: verify `index.html` cache-bust query changed and hard-refresh the page.
 - Deploy fails with `Permission denied (publickey)`: unlock `/home/nichlas/.ssh/euther_server` in an `ssh-agent` before running `scripts/deploy-server.sh`.

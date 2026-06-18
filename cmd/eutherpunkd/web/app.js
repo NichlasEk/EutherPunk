@@ -9,6 +9,16 @@ const imagePreviewEl = document.querySelector("#imagePreview");
 const micButton = document.querySelector("#micButton");
 const voiceToggle = document.querySelector("#voiceToggle");
 const serverVoiceToggle = document.querySelector("#serverVoiceToggle");
+const settingsButton = document.querySelector("#settingsButton");
+const settingsDialog = document.querySelector("#settingsDialog");
+const settingsForm = document.querySelector("#settingsForm");
+const settingsCloseButton = document.querySelector("#settingsCloseButton");
+const chatModelInput = document.querySelector("#chatModelInput");
+const visionModelInput = document.querySelector("#visionModelInput");
+const imageModelSelect = document.querySelector("#imageModelSelect");
+const imageLoraSelect = document.querySelector("#imageLoraSelect");
+const voiceBackendInput = document.querySelector("#voiceBackendInput");
+const settingsSaveButton = document.querySelector("#settingsSaveButton");
 
 const maxHistoryMessages = 30;
 const maxVisionImageSide = 256;
@@ -23,6 +33,18 @@ let activeConversationId = "";
 let activeConversationTitle = "Ny chat";
 let activeConversationCreatedAt = "";
 let conversationMessages = [];
+let userSettings = {
+  chat_model: "qwen3-coder:30b",
+  vision_model: "moondream:latest",
+  image_model: "z-image-turbo",
+  image_lora: "none",
+  voice_backend: "grapheneos-matcha-en",
+};
+let imageModels = [
+  { id: "z-image-turbo", label: "Z-Image Turbo" },
+  { id: "sensenova-u1-8b", label: "SenseNova U1 8B" },
+];
+let imageLoras = ["none"];
 
 function newConversationId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
@@ -49,6 +71,61 @@ async function loadConversationList() {
   const payload = await response.json();
   conversations = payload.conversations || [];
   renderConversationList();
+}
+
+async function loadSettings() {
+  const response = await fetch("/api/eutherpunk/settings");
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const payload = await response.json();
+  userSettings = { ...userSettings, ...(payload.settings || {}) };
+  imageModels = payload.image_models || imageModels;
+  imageLoras = userSettings.loras || imageLoras;
+  renderSettingsForm();
+}
+
+function renderSettingsForm() {
+  chatModelInput.value = userSettings.chat_model || "";
+  visionModelInput.value = userSettings.vision_model || "";
+  voiceBackendInput.value = userSettings.voice_backend || "";
+  renderOptions(imageModelSelect, imageModels.map((model) => [model.id, model.label]), userSettings.image_model);
+  renderOptions(imageLoraSelect, imageLoras.map((lora) => [lora, lora === "none" ? "Ingen" : lora]), userSettings.image_lora);
+}
+
+function renderOptions(select, options, selectedValue) {
+  select.replaceChildren();
+  for (const [value, label] of options) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    if (value === selectedValue) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  }
+}
+
+async function saveSettings() {
+  const payload = {
+    chat_model: chatModelInput.value.trim(),
+    vision_model: visionModelInput.value.trim(),
+    image_model: imageModelSelect.value,
+    image_lora: imageLoraSelect.value,
+    voice_backend: voiceBackendInput.value.trim(),
+  };
+  const response = await fetch("/api/eutherpunk/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body.error || response.statusText);
+  }
+  userSettings = { ...userSettings, ...(body.settings || {}) };
+  imageLoras = userSettings.loras || imageLoras;
+  renderSettingsForm();
 }
 
 async function openConversation(id) {
@@ -234,7 +311,7 @@ async function speakWithServerVoice(text) {
   const response = await fetch("/api/eutherpunk/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, model_backend: userSettings.voice_backend }),
   });
   if (!response.ok) {
     const message = await response.text();
@@ -269,7 +346,10 @@ async function sendPrompt(prompt, images = []) {
     const response = await fetch("/api/eutherpunk/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: modelMessages(conversationMessages) }),
+      body: JSON.stringify({
+        model: userSettings.chat_model,
+        messages: modelMessages(conversationMessages),
+      }),
     });
 
     if (!response.ok || !response.body) {
@@ -330,6 +410,8 @@ async function generateImage(prompt, displayText = "") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt,
+        image_model: userSettings.image_model,
+        lora: userSettings.image_lora,
         context: modelMessages(conversationMessages.slice(-12)),
       }),
     });
@@ -663,6 +745,28 @@ serverVoiceToggle.addEventListener("click", () => {
   }
 });
 
+settingsButton.addEventListener("click", () => {
+  renderSettingsForm();
+  settingsDialog.showModal();
+});
+
+settingsCloseButton.addEventListener("click", () => {
+  settingsDialog.close();
+});
+
+settingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  settingsSaveButton.disabled = true;
+  try {
+    await saveSettings();
+    settingsDialog.close();
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  } finally {
+    settingsSaveButton.disabled = false;
+  }
+});
+
 function setupSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
@@ -693,6 +797,9 @@ micButton.addEventListener("click", () => {
 
 setupSpeechRecognition();
 loadStatus();
+loadSettings().catch((error) => {
+  statusEl.textContent = `Settings offline: ${error.message}`;
+});
 loadConversationList().catch((error) => {
   statusEl.textContent = `Historik offline: ${error.message}`;
 });

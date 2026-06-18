@@ -24,6 +24,7 @@
         <div class="actions">
           <a class="navLink" href="/">EutherHost</a>
           <a class="download" href="/downloads/eutherpunk-cli/linux-amd64">CLI</a>
+          <button id="settingsButton" type="button" title="Inställningar">⚙</button>
           <button id="serverVoiceToggle" type="button">Serverröst av</button>
           <button id="voiceToggle" type="button">TTS av</button>
         </div>
@@ -40,6 +41,38 @@
         <button type="submit">Skicka</button>
       </form>
     </main>
-    <script src="/web/app.js?v=20260618-host-link"></script>
+
+    <dialog id="settingsDialog" class="settingsDialog">
+      <form id="settingsForm" method="dialog">
+        <div class="settingsHead">
+          <strong>Inställningar</strong>
+          <button id="settingsCloseButton" type="button" aria-label="Stäng">×</button>
+        </div>
+        <label>
+          Chatmodell
+          <input id="chatModelInput" name="chat_model" autocomplete="off">
+        </label>
+        <label>
+          Visionmodell
+          <input id="visionModelInput" name="vision_model" autocomplete="off">
+        </label>
+        <label>
+          Bildmodell
+          <select id="imageModelSelect" name="image_model"></select>
+        </label>
+        <label>
+          Bild-LoRA
+          <select id="imageLoraSelect" name="image_lora"></select>
+        </label>
+        <label>
+          TTS-backend
+          <input id="voiceBackendInput" name="voice_backend" autocomplete="off">
+        </label>
+        <div class="settingsActions">
+          <button id="settingsSaveButton" type="submit">Spara</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="/web/app.js?v=20260618-model-settings"></script>
   </body>
 </html>
