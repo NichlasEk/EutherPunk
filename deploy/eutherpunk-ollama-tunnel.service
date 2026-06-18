@@ -1,0 +1,13 @@
+[Unit]
+Description=EutherPunk Ollama reverse tunnel to EutherOxide host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -N -T -o ExitOnForwardFailure=yes -o ConnectTimeout=10 -o TCPKeepAlive=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o BatchMode=yes -o IdentitiesOnly=yes -i /home/nichlas/.ssh/euthersight_tunnel -R 127.0.0.1:11434:127.0.0.1:11434 nichlas@192.168.32.186
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

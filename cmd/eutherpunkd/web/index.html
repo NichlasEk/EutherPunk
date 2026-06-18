@@ -8,12 +8,21 @@
   </head>
   <body>
     <main class="shell">
+      <aside class="sidebar" aria-label="Chattar">
+        <div class="sidebarHead">
+          <strong>Chattar</strong>
+          <button id="newChatButton" type="button">Ny</button>
+        </div>
+        <div id="conversationList" class="conversationList"></div>
+      </aside>
+
       <section class="topbar" aria-label="Status">
         <div>
-          <h1>EutherPunk</h1>
+          <h1 id="chatTitle">EutherPunk</h1>
           <p id="status">Ansluter...</p>
         </div>
         <div class="actions">
+          <a class="navLink" href="/">EutherHost</a>
           <a class="download" href="/downloads/eutherpunk-cli/linux-amd64">CLI</a>
           <button id="serverVoiceToggle" type="button">Serverröst av</button>
           <button id="voiceToggle" type="button">TTS av</button>
@@ -24,10 +33,13 @@
 
       <form id="chatForm" class="composer">
         <button id="micButton" class="icon" type="button" title="Prata">Mic</button>
-        <textarea id="prompt" rows="2" placeholder="Skriv till EutherPunk..."></textarea>
+        <div class="inputStack">
+          <div id="imagePreview" class="imagePreview" aria-live="polite"></div>
+          <textarea id="prompt" rows="2" placeholder="Skriv till EutherPunk..."></textarea>
+        </div>
         <button type="submit">Skicka</button>
       </form>
     </main>
-    <script src="/web/app.js"></script>
+    <script src="/web/app.js?v=20260618-host-link"></script>
   </body>
 </html>

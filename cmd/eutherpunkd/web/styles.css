@@ -24,15 +24,80 @@ body {
 
 .shell {
   display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
   grid-template-rows: auto 1fr auto;
-  width: min(1120px, 100%);
+  width: min(1280px, 100%);
   min-height: 100vh;
   margin: 0 auto;
   padding: 18px;
   gap: 14px;
 }
 
+.sidebar {
+  grid-row: 1 / -1;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(20, 24, 33, 0.76);
+  overflow: hidden;
+}
+
+.sidebarHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.conversationList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.conversationItem {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 10px;
+  text-align: left;
+  justify-items: start;
+  align-content: center;
+  border-radius: 7px;
+}
+
+.conversationItem strong,
+.conversationItem small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversationItem strong {
+  font-size: 14px;
+}
+
+.conversationItem small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.conversationItem.is-active {
+  border-color: rgba(50, 208, 198, 0.7);
+  background: rgba(50, 208, 198, 0.13);
+}
+
 .topbar {
+  grid-column: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -60,7 +125,8 @@ p {
 }
 
 button,
-.download {
+.download,
+.navLink {
   min-height: 42px;
   border: 1px solid var(--line);
   background: var(--panel-2);
@@ -88,6 +154,7 @@ button:disabled {
 }
 
 .messages {
+  grid-column: 2;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -105,6 +172,38 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.messageImages,
+.imagePreview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.messageImages {
+  margin-top: 10px;
+}
+
+.imagePreview img {
+  display: block;
+  width: 112px;
+  height: 84px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #050609;
+}
+
+.messageImages img {
+  display: block;
+  width: min(100%, 512px);
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #050609;
+}
+
 .message.user {
   align-self: flex-end;
   border-color: rgba(50, 208, 198, 0.55);
@@ -116,12 +215,39 @@ button:disabled {
 }
 
 .composer {
+  grid-column: 2;
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: end;
   border-top: 1px solid var(--line);
   padding-top: 14px;
+}
+
+.inputStack {
+  display: grid;
+  gap: 8px;
+}
+
+.imagePreview:empty {
+  display: none;
+}
+
+.previewItem {
+  position: relative;
+}
+
+.previewItem button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: rgba(242, 245, 248, 0.35);
+  background: rgba(11, 13, 16, 0.82);
 }
 
 textarea {
@@ -144,7 +270,20 @@ textarea {
 
 @media (max-width: 640px) {
   .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr auto;
     padding: 12px;
+  }
+
+  .sidebar {
+    grid-row: auto;
+    max-height: 190px;
+  }
+
+  .topbar,
+  .messages,
+  .composer {
+    grid-column: 1;
   }
 
   .topbar {

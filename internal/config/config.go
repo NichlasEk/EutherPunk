@@ -16,6 +16,7 @@ type Config struct {
 	Agent       AgentConfig           `json:"agent"`
 	Downloads   DownloadsConfig       `json:"downloads"`
 	Voice       VoiceConfig           `json:"voice"`
+	Image       ImageConfig           `json:"image"`
 	EutherOxide EutherOxideConfig     `json:"eutheroxide"`
 	Tools       ToolsConfig           `json:"tools"`
 	Users       map[string]UserConfig `json:"users"`
@@ -29,11 +30,12 @@ type ServerConfig struct {
 }
 
 type AgentConfig struct {
-	APIURL    string `json:"api_url"`
-	Listen    string `json:"listen"`
-	OllamaURL string `json:"ollama_url"`
-	Model     string `json:"model"`
-	SafeMode  bool   `json:"safe_mode"`
+	APIURL      string `json:"api_url"`
+	Listen      string `json:"listen"`
+	OllamaURL   string `json:"ollama_url"`
+	Model       string `json:"model"`
+	VisionModel string `json:"vision_model"`
+	SafeMode    bool   `json:"safe_mode"`
 }
 
 type DownloadsConfig struct {
@@ -46,6 +48,15 @@ type VoiceConfig struct {
 	Language         string `json:"language"`
 	VoiceInstruction string `json:"voice_instruction"`
 	TimeoutSeconds   int    `json:"timeout_seconds"`
+}
+
+type ImageConfig struct {
+	ComfyUIURL     string `json:"comfyui_url"`
+	Directory      string `json:"directory"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	DefaultWidth   int    `json:"default_width"`
+	DefaultHeight  int    `json:"default_height"`
+	DefaultSteps   int    `json:"default_steps"`
 }
 
 type EutherOxideConfig struct {
@@ -78,11 +89,12 @@ func Default() Config {
 			PreferLAN: true,
 		},
 		Agent: AgentConfig{
-			APIURL:    "http://127.0.0.1:8787",
-			Listen:    ":8787",
-			OllamaURL: "http://127.0.0.1:11434",
-			Model:     "qwen3-coder:30b",
-			SafeMode:  true,
+			APIURL:      "http://127.0.0.1:8787",
+			Listen:      ":8787",
+			OllamaURL:   "http://127.0.0.1:11434",
+			Model:       "qwen3-coder:30b",
+			VisionModel: "moondream:latest",
+			SafeMode:    true,
 		},
 		Downloads: DownloadsConfig{
 			Directory: "dist/cli",
@@ -93,6 +105,14 @@ func Default() Config {
 			Language:         "en",
 			VoiceInstruction: "A warm, clear English voice with calm natural pacing.",
 			TimeoutSeconds:   45,
+		},
+		Image: ImageConfig{
+			ComfyUIURL:     "http://192.168.32.88:8188",
+			Directory:      "var/images",
+			TimeoutSeconds: 180,
+			DefaultWidth:   1024,
+			DefaultHeight:  1024,
+			DefaultSteps:   8,
 		},
 		EutherOxide: EutherOxideConfig{
 			BaseURL:      "http://192.168.32.186:8080",
@@ -221,6 +241,8 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.Agent.OllamaURL = mustString(raw)
 		case "model":
 			cfg.Agent.Model = mustString(raw)
+		case "vision_model":
+			cfg.Agent.VisionModel = mustString(raw)
 		case "safe_mode":
 			cfg.Agent.SafeMode = mustBool(raw)
 		default:
@@ -256,6 +278,23 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.Voice.VoiceInstruction = mustString(raw)
 		case "timeout_seconds":
 			cfg.Voice.TimeoutSeconds = mustInt(raw)
+		default:
+			return unknown(section, key)
+		}
+	case "image":
+		switch key {
+		case "comfyui_url":
+			cfg.Image.ComfyUIURL = mustString(raw)
+		case "directory":
+			cfg.Image.Directory = mustString(raw)
+		case "timeout_seconds":
+			cfg.Image.TimeoutSeconds = mustInt(raw)
+		case "default_width":
+			cfg.Image.DefaultWidth = mustInt(raw)
+		case "default_height":
+			cfg.Image.DefaultHeight = mustInt(raw)
+		case "default_steps":
+			cfg.Image.DefaultSteps = mustInt(raw)
 		default:
 			return unknown(section, key)
 		}

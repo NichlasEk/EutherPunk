@@ -10,6 +10,7 @@ api_url = "http://127.0.0.1:8787"
 listen = "127.0.0.1:8787"
 ollama_url = "http://127.0.0.1:11434"
 model = "qwen3-coder:30b"
+vision_model = "moondream:latest"
 safe_mode = true
 
 [downloads]
@@ -21,6 +22,14 @@ model_backend = "grapheneos-matcha-en"
 language = "en"
 voice_instruction = "A warm, clear English voice with calm natural pacing."
 timeout_seconds = 45
+
+[image]
+comfyui_url = "http://192.168.32.88:8188"
+directory = "/home/nichlas/EutherPunk/var/images"
+timeout_seconds = 180
+default_width = 1024
+default_height = 1024
+default_steps = 8
 
 [eutheroxide]
 base_url = "http://192.168.32.186:8080"

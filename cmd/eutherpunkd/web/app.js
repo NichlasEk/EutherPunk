@@ -1,15 +1,35 @@
 const statusEl = document.querySelector("#status");
+const chatTitleEl = document.querySelector("#chatTitle");
 const messagesEl = document.querySelector("#messages");
+const conversationListEl = document.querySelector("#conversationList");
+const newChatButton = document.querySelector("#newChatButton");
 const form = document.querySelector("#chatForm");
 const promptEl = document.querySelector("#prompt");
+const imagePreviewEl = document.querySelector("#imagePreview");
 const micButton = document.querySelector("#micButton");
 const voiceToggle = document.querySelector("#voiceToggle");
 const serverVoiceToggle = document.querySelector("#serverVoiceToggle");
 
+const maxHistoryMessages = 30;
+const maxVisionImageSide = 384;
+const visionImageQuality = 0.82;
 let ttsEnabled = false;
 let serverVoiceEnabled = false;
 let recognition = null;
 let activeAudio = null;
+let pendingImages = [];
+let conversations = [];
+let activeConversationId = "";
+let activeConversationTitle = "Ny chat";
+let activeConversationCreatedAt = "";
+let conversationMessages = [];
+
+function newConversationId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 async function loadStatus() {
   try {
@@ -21,10 +41,143 @@ async function loadStatus() {
   }
 }
 
-function addMessage(role, text = "") {
+async function loadConversationList() {
+  const response = await fetch("/api/eutherpunk/conversations");
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const payload = await response.json();
+  conversations = payload.conversations || [];
+  renderConversationList();
+}
+
+async function openConversation(id) {
+  const response = await fetch(`/api/eutherpunk/conversations/${encodeURIComponent(id)}`);
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const conversation = await response.json();
+  activeConversationId = conversation.id;
+  activeConversationTitle = conversation.title || "Ny chat";
+  activeConversationCreatedAt = conversation.created_at || "";
+  conversationMessages = normalizeStoredMessages(conversation.messages || []);
+  renderConversation();
+  renderConversationList();
+}
+
+function startNewConversation() {
+  activeConversationId = "";
+  activeConversationTitle = "Ny chat";
+  activeConversationCreatedAt = "";
+  conversationMessages = [];
+  renderConversation();
+  renderConversationList();
+  promptEl.focus();
+}
+
+async function saveActiveConversation() {
+  if (conversationMessages.length === 0) {
+    return;
+  }
+  if (!activeConversationId) {
+    activeConversationId = newConversationId();
+  }
+  const payload = {
+    id: activeConversationId,
+    title: activeConversationTitle,
+    created_at: activeConversationCreatedAt,
+    messages: conversationMessages,
+  };
+  const response = await fetch(`/api/eutherpunk/conversations/${encodeURIComponent(activeConversationId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const saved = await response.json();
+  activeConversationId = saved.id;
+  activeConversationTitle = saved.title || activeConversationTitle;
+  activeConversationCreatedAt = saved.created_at || activeConversationCreatedAt;
+  upsertConversationSummary(saved);
+  renderConversationList();
+  renderTitle();
+}
+
+function upsertConversationSummary(conversation) {
+  const summary = {
+    id: conversation.id,
+    title: conversation.title || "Ny chat",
+    created_at: conversation.created_at,
+    updated_at: conversation.updated_at,
+    count: (conversation.messages || []).length,
+  };
+  const index = conversations.findIndex((item) => item.id === summary.id);
+  if (index >= 0) {
+    conversations[index] = summary;
+  } else {
+    conversations.unshift(summary);
+  }
+  conversations.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+}
+
+function renderConversationList() {
+  conversationListEl.replaceChildren();
+  if (conversations.length === 0) {
+    const empty = document.createElement("button");
+    empty.type = "button";
+    empty.className = "conversationItem";
+    empty.disabled = true;
+    empty.innerHTML = "<strong>Ingen historik än</strong><small>Skriv första frågan</small>";
+    conversationListEl.appendChild(empty);
+    return;
+  }
+  for (const conversation of conversations) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `conversationItem${conversation.id === activeConversationId ? " is-active" : ""}`;
+    button.dataset.conversationId = conversation.id;
+    const title = document.createElement("strong");
+    title.textContent = conversation.title || "Ny chat";
+    const meta = document.createElement("small");
+    meta.textContent = conversationDate(conversation.updated_at);
+    button.append(title, meta);
+    conversationListEl.appendChild(button);
+  }
+}
+
+function renderConversation() {
+  messagesEl.replaceChildren();
+  renderTitle();
+  for (const message of conversationMessages) {
+    addMessage(message.role, message.content, message.images || []);
+  }
+}
+
+function renderTitle() {
+  chatTitleEl.textContent = activeConversationTitle === "Ny chat" ? "EutherPunk" : activeConversationTitle;
+}
+
+function addMessage(role, text = "", images = []) {
   const node = document.createElement("article");
   node.className = `message ${role}`;
-  node.textContent = text;
+  if (text) {
+    const textNode = document.createElement("div");
+    textNode.textContent = text;
+    node.appendChild(textNode);
+  }
+  if (images.length > 0) {
+    const imageWrap = document.createElement("div");
+    imageWrap.className = "messageImages";
+    for (const image of images) {
+      const img = document.createElement("img");
+      img.src = image.url || image.dataURL;
+      img.alt = image.alt || "Bild";
+      imageWrap.appendChild(img);
+    }
+    node.appendChild(imageWrap);
+  }
   messagesEl.appendChild(node);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return node;
@@ -68,63 +221,253 @@ async function speakWithServerVoice(text) {
   await activeAudio.play();
 }
 
-async function sendPrompt(prompt) {
-  addMessage("user", prompt);
+async function sendPrompt(prompt, images = []) {
+  const userMessage = {
+    role: "user",
+    content: prompt || "Beskriv bilden.",
+    images,
+  };
+  addMessage("user", userMessage.content, images);
+  conversationMessages.push(userMessage);
+  trimHistory();
+  await saveActiveConversation();
+
   const assistantNode = addMessage("assistant", "");
   let fullText = "";
 
-  const response = await fetch("/api/eutherpunk/chat/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: prompt }),
-  });
+  try {
+    const response = await fetch("/api/eutherpunk/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: modelMessages(conversationMessages) }),
+    });
 
-  if (!response.ok || !response.body) {
-    const text = await response.text();
-    throw new Error(text || response.statusText);
+    if (!response.ok || !response.body) {
+      const text = await response.text();
+      throw new Error(text || response.statusText);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue;
+        }
+        const chunk = JSON.parse(line);
+        if (chunk.error) {
+          throw new Error(chunk.error);
+        }
+        if (chunk.delta) {
+          fullText += chunk.delta;
+          assistantNode.textContent = fullText;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      }
+    }
+  } catch (error) {
+    conversationMessages = conversationMessages.filter((message) => message !== userMessage);
+    await saveActiveConversation().catch(() => {});
+    throw error;
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-      const chunk = JSON.parse(line);
-      if (chunk.error) {
-        throw new Error(chunk.error);
-      }
-      if (chunk.delta) {
-        fullText += chunk.delta;
-        assistantNode.textContent = fullText;
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
-    }
-  }
-
+  conversationMessages.push({ role: "assistant", content: fullText, images: [] });
+  trimHistory();
+  await saveActiveConversation();
   await speak(fullText);
+}
+
+async function generateImage(prompt) {
+  const userMessage = { role: "user", content: `/bild ${prompt}`, images: [] };
+  addMessage("user", userMessage.content);
+  const assistantNode = addMessage("assistant", "Genererar bild...");
+  conversationMessages.push(userMessage);
+  trimHistory();
+  await saveActiveConversation();
+
+  try {
+    const response = await fetch("/api/eutherpunk/images/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || response.statusText);
+    }
+    const generatedImage = { url: payload.url, alt: prompt };
+    assistantNode.replaceChildren();
+    const textNode = document.createElement("div");
+    textNode.textContent = "Bild klar.";
+    const imageWrap = document.createElement("div");
+    imageWrap.className = "messageImages";
+    const img = document.createElement("img");
+    img.src = payload.url;
+    img.alt = prompt;
+    imageWrap.appendChild(img);
+    assistantNode.append(textNode, imageWrap);
+    conversationMessages.push({
+      role: "assistant",
+      content: `Bild sparad: ${payload.url}`,
+      images: [generatedImage],
+    });
+    trimHistory();
+    await saveActiveConversation();
+  } catch (error) {
+    conversationMessages = conversationMessages.filter((message) => message !== userMessage);
+    await saveActiveConversation().catch(() => {});
+    throw error;
+  }
+}
+
+function trimHistory() {
+  if (conversationMessages.length > maxHistoryMessages) {
+    conversationMessages = conversationMessages.slice(-maxHistoryMessages);
+  }
+}
+
+function modelMessages(messages) {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content,
+    images: (message.images || []).map((image) => image.ollamaImage).filter(Boolean),
+  }));
+}
+
+function normalizeStoredMessages(messages) {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content || "",
+    images: (message.images || []).map((image) => ({
+      dataURL: image.dataURL || "",
+      url: image.url || "",
+      alt: image.alt || "Bild",
+      ollamaImage: image.ollamaImage || image.ollama_image || "",
+    })),
+  }));
+}
+
+function conversationDate(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return new Intl.DateTimeFormat("sv-SE", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function renderImagePreview() {
+  imagePreviewEl.replaceChildren();
+  pendingImages.forEach((image, index) => {
+    const item = document.createElement("div");
+    item.className = "previewItem";
+    const img = document.createElement("img");
+    img.src = image.dataURL;
+    img.alt = image.name || "Bild";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "x";
+    button.title = "Ta bort bild";
+    button.addEventListener("click", () => {
+      pendingImages.splice(index, 1);
+      renderImagePreview();
+      promptEl.focus();
+    });
+    item.append(img, button);
+    imagePreviewEl.appendChild(item);
+  });
+}
+
+async function addImageFile(file) {
+  if (!file.type.startsWith("image/")) {
+    return;
+  }
+  const dataURL = await compressImageFile(file, maxVisionImageSide, visionImageQuality);
+  const [, base64 = ""] = dataURL.split(",", 2);
+  if (!base64) {
+    return;
+  }
+  pendingImages.push({
+    name: file.name,
+    dataURL,
+    alt: file.name || "Bild",
+    ollamaImage: base64,
+  });
+  renderImagePreview();
+}
+
+async function compressImageFile(file, maxSide, quality) {
+  const bitmap = await loadBitmap(file);
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.drawImage(bitmap, 0, 0, width, height);
+  if ("close" in bitmap) {
+    bitmap.close();
+  }
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+async function loadBitmap(file) {
+  if ("createImageBitmap" in window) {
+    return createImageBitmap(file);
+  }
+  const dataURL = await readFileAsDataURL(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Kunde inte lasa bild"));
+    img.src = dataURL;
+  });
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Kunde inte lasa bild"));
+    reader.readAsDataURL(file);
+  });
 }
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const prompt = promptEl.value.trim();
-  if (!prompt) {
+  const images = pendingImages.slice();
+  if (!prompt && images.length === 0) {
     return;
   }
   promptEl.value = "";
+  pendingImages = [];
+  renderImagePreview();
   form.querySelector("button[type='submit']").disabled = true;
   try {
-    await sendPrompt(prompt);
+    const imagePrompt = parseImageCommand(prompt);
+    if (images.length === 0 && imagePrompt) {
+      await generateImage(imagePrompt);
+    } else {
+      await sendPrompt(prompt, images);
+    }
   } catch (error) {
     addMessage("assistant", `Fel: ${error.message}`);
   } finally {
@@ -133,17 +476,73 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+conversationListEl.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-conversation-id]");
+  if (!button) {
+    return;
+  }
+  try {
+    await openConversation(button.dataset.conversationId);
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  }
+});
+
+newChatButton.addEventListener("click", startNewConversation);
+
+function parseImageCommand(prompt) {
+  const trimmed = prompt.trim();
+  for (const prefix of ["/bild ", "/image "]) {
+    if (trimmed.toLowerCase().startsWith(prefix)) {
+      return trimmed.slice(prefix.length).trim();
+    }
+  }
+  return "";
+}
+
+promptEl.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+promptEl.addEventListener("paste", async (event) => {
+  const files = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
+  if (files.length === 0) {
+    return;
+  }
+  event.preventDefault();
+  await Promise.all(files.map(addImageFile));
+});
+
+form.addEventListener("dragover", (event) => {
+  if ([...(event.dataTransfer?.items || [])].some((item) => item.type.startsWith("image/"))) {
+    event.preventDefault();
+  }
+});
+
+form.addEventListener("drop", async (event) => {
+  const files = [...(event.dataTransfer?.files || [])].filter((file) => file.type.startsWith("image/"));
+  if (files.length === 0) {
+    return;
+  }
+  event.preventDefault();
+  await Promise.all(files.map(addImageFile));
+  promptEl.focus();
+});
+
 voiceToggle.addEventListener("click", () => {
   ttsEnabled = !ttsEnabled;
-  voiceToggle.textContent = ttsEnabled ? "TTS på" : "TTS av";
+  voiceToggle.textContent = ttsEnabled ? "TTS pa" : "TTS av";
 });
 
 serverVoiceToggle.addEventListener("click", () => {
   serverVoiceEnabled = !serverVoiceEnabled;
-  serverVoiceToggle.textContent = serverVoiceEnabled ? "Serverröst på" : "Serverröst av";
+  serverVoiceToggle.textContent = serverVoiceEnabled ? "Serverrost pa" : "Serverrost av";
   if (serverVoiceEnabled && !ttsEnabled) {
     ttsEnabled = true;
-    voiceToggle.textContent = "TTS på";
+    voiceToggle.textContent = "TTS pa";
   }
 });
 
@@ -151,7 +550,7 @@ function setupSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
     micButton.disabled = true;
-    micButton.title = "Voice input stöds inte i den här browsern";
+    micButton.title = "Voice input stods inte i den har browsern";
     return;
   }
   recognition = new SpeechRecognition();
@@ -177,3 +576,7 @@ micButton.addEventListener("click", () => {
 
 setupSpeechRecognition();
 loadStatus();
+loadConversationList().catch((error) => {
+  statusEl.textContent = `Historik offline: ${error.message}`;
+});
+renderConversation();
