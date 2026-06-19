@@ -385,7 +385,7 @@ async function sendPrompt(prompt, images = []) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: images.length > 0 ? userSettings.vision_model : userSettings.chat_model,
-        messages: modelMessages(conversationMessages),
+        messages: modelMessages(conversationMessages, { includeImageMemory: images.length === 0 }),
       }),
     });
 
@@ -430,9 +430,10 @@ async function sendPrompt(prompt, images = []) {
     throw error;
   }
 
-  if (imageMetadata && userMessage.images.length > 0) {
+  const storedMetadata = imageMetadata || fullText;
+  if (storedMetadata && userMessage.images.length > 0) {
     for (const image of userMessage.images) {
-      image.description = imageMetadata;
+      image.description = storedMetadata;
     }
   }
   conversationMessages.push({ role: "assistant", content: fullText, images: [] });
@@ -557,11 +558,12 @@ function trimHistory() {
   }
 }
 
-function modelMessages(messages) {
+function modelMessages(messages, options = {}) {
+  const includeImageMemory = options.includeImageMemory !== false;
   return messages.map((message, index) => {
     const isLatest = index === messages.length - 1;
     const images = isLatest ? (message.images || []).map((image) => image.ollamaImage).filter(Boolean) : [];
-    const memory = imageMemoryText(message.images || []);
+    const memory = includeImageMemory ? imageMemoryText(message.images || []) : "";
     const content = memory ? `${message.content}\n\n${memory}`.trim() : message.content;
     return {
       role: message.role,

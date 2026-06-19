@@ -1038,10 +1038,33 @@ func askVisionOllamaDetailed(ctx context.Context, cfg serverConfig, system strin
 	}
 	metadata, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, visionMetadataSystemPrompt(system), visionMetadataMessages(messages))
 	if err != nil {
-		return answer, "", nil
+		return localizeVisionAnswer(ctx, cfg, answer), answer, nil
 	}
 	metadata = normalizeVisionMetadata(metadata)
+	if metadata == "" {
+		metadata = answer
+	}
+	answer = localizeVisionAnswer(ctx, cfg, answer)
 	return answer, metadata, nil
+}
+
+func localizeVisionAnswer(ctx context.Context, cfg serverConfig, answer string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return ""
+	}
+	localized, err := askOllama(ctx, cfg.ollamaURL, cfg.model, "Du skriver om bildtolkningar till kort, naturlig svenska. Behall sakuppgifter. Lagg inte till nya detaljer.", []ollamaMessage{{
+		Role:    "user",
+		Content: "Skriv detta pa svenska, kort och konkret: " + answer,
+	}})
+	if err != nil {
+		return answer
+	}
+	localized = strings.TrimSpace(localized)
+	if localized == "" {
+		return answer
+	}
+	return localized
 }
 
 func visionMetadataSystemPrompt(base string) string {
