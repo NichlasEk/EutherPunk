@@ -6,10 +6,12 @@ This is the recovery map for EutherPunk chat image generation.
 
 1. Browser chat sends `/bild <prompt>` to EutherPunk.
 2. EutherPunk server receives `POST /api/eutherpunk/images/generate`.
-3. EutherPunk posts a temporary image workflow to ComfyUI at `http://192.168.32.88:8188/prompt`.
-4. ComfyUI generates the image and exposes it through its `/history/{prompt_id}` and `/view` endpoints.
-5. EutherPunk downloads the PNG and stores it under `/home/nichlas/EutherPunk/var/images/<user>/`.
-6. Browser displays the stored server URL: `/api/eutherpunk/images/<user>/<file>.png`.
+3. EutherPunk returns a short-lived in-memory image job id to the browser.
+4. The browser polls `/api/eutherpunk/images/jobs/<job_id>` instead of holding a long fetch open.
+5. The background EutherPunk job posts a temporary image workflow to ComfyUI at `http://192.168.32.88:8188/prompt`.
+6. ComfyUI generates the image and exposes it through its `/history/{prompt_id}` and `/view` endpoints.
+7. EutherPunk downloads the PNG and stores it under `/home/nichlas/EutherPunk/var/images/<user>/`.
+8. Browser displays the stored server URL: `/api/eutherpunk/images/<user>/<file>.png`.
 
 The permanent copy is owned by EutherPunk, not ComfyUI. ComfyUI is only the generator.
 
@@ -188,13 +190,18 @@ curl -fsS -H 'Content-Type: application/json' \
   http://192.168.32.186:8080/api/eutherpunk/images/generate
 ```
 
-Expected result: JSON with `url`, `user`, `filename`, and `prompt_id`. The file should exist under `/home/nichlas/EutherPunk/var/images/<user>/` on the server.
+Expected result: JSON with `job_id` and `status`. Poll `/api/eutherpunk/images/jobs/<job_id>` until it returns `status = done` and an `image` object with `url`, `user`, `filename`, and `prompt_id`. The file should exist under `/home/nichlas/EutherPunk/var/images/<user>/` on the server.
+
+Async image jobs wait up to at least 15 minutes server-side. This keeps browser
+fetch/proxy drops from cancelling ComfyUI jobs and allows a short Z-Image job to
+survive sitting behind a slower SenseNova job in the ComfyUI queue.
 
 ## Common Failures
 
 - `connection refused` to `127.0.0.1:11434` on server: local Ollama reverse tunnel is down.
 - `connection refused` to `192.168.32.88:8188`: ComfyUI is down or bound to the wrong address.
 - `connection refused` after a long SenseNova wait: check `journalctl --user -u comfyui.service`; OOM-kill means RAM/swap/resource release failed before or during the job.
+- Browser `NetworkError when attempting to fetch resource` during image generation: verify that the browser is using the async image job API and polling `/api/eutherpunk/images/jobs/<job_id>`. Long direct fetches can be dropped by the browser, LAN, or public reverse proxy while ComfyUI continues running.
 - `EnvironmentNameNotFound: comfyui`: restore the `.venv` based ComfyUI service.
 - ComfyUI `node_errors` for Z-Image: verify `/object_info` still lists `UNETLoader`, `CLIPLoader`, `VAELoader`, `EmptySD3LatentImage`, `KSampler`, and `PreviewImage`.
 - ComfyUI `node_errors` for SenseNova: verify `/object_info` still lists `SenseNova_SM_Model` and `SenseNova_SM_Sampler`, and that the GGUF and LoRA files exist in the paths above.

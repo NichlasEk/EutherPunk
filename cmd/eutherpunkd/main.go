@@ -42,7 +42,11 @@ const (
 //go:embed web/*
 var webFiles embed.FS
 
-var imageGenerationMu sync.Mutex
+var (
+	imageGenerationMu sync.Mutex
+	imageJobsMu       sync.Mutex
+	imageJobs         = map[string]imageJob{}
+)
 
 type serverConfig struct {
 	addr           string
@@ -194,6 +198,15 @@ type imageResponse struct {
 	URL       string `json:"url"`
 }
 
+type imageJob struct {
+	ID        string        `json:"job_id"`
+	Status    string        `json:"status"`
+	Response  imageResponse `json:"image,omitempty"`
+	Error     string        `json:"error,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+}
+
 type chatResponse struct {
 	Model   string `json:"model"`
 	Message string `json:"message"`
@@ -294,6 +307,7 @@ func main() {
 	mux.HandleFunc("POST /api/eutherpunk/chat/stream", handleChatStream(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/tts", handleTTS(cfg))
 	mux.HandleFunc("POST /api/eutherpunk/images/generate", handleImageGenerate(cfg))
+	mux.HandleFunc("GET /api/eutherpunk/images/jobs/{id}", handleImageJobGet())
 	mux.HandleFunc("GET /api/eutherpunk/images/{user}/{file}", handleStoredImage(cfg))
 	mux.HandleFunc("GET /downloads/eutherpunk-cli/{platform}", handleCLIDownload(cfg))
 
@@ -689,12 +703,6 @@ func handleStoredImage(cfg serverConfig) http.HandlerFunc {
 
 func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !imageGenerationMu.TryLock() {
-			writeError(w, http.StatusTooManyRequests, errors.New("image generation is already running"))
-			return
-		}
-		defer imageGenerationMu.Unlock()
-
 		var req imageRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -706,43 +714,117 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 			return
 		}
 		user := requestUser(r, cfg)
-		settings, err := readUserSettings(cfg, user)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
+		job := newImageJob()
+		storeImageJob(job)
+		go runImageJob(cfg, user, req, job.ID)
+		writeJSON(w, http.StatusAccepted, job)
+	}
+}
+
+func handleImageJobGet() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := safeID(r.PathValue("id"))
+		if id == "" {
+			writeError(w, http.StatusBadRequest, errors.New("job id is required"))
 			return
 		}
-		if strings.TrimSpace(req.ImageModel) == "" {
-			req.ImageModel = settings.ImageModel
-		}
-		if strings.TrimSpace(req.Lora) == "" {
-			req.Lora = settings.ImageLora
-		}
-		imageModel := normalizeImageModel(req.ImageModel)
-		if !isSenseNovaImageModel(imageModel) || imageModel == "sensenova-u1-8b-fast" {
-			req.Lora = "none"
-		} else if err := ensureSenseNovaReady(r.Context(), cfg.image, req.Lora); err != nil {
-			writeError(w, http.StatusConflict, err)
+		job, ok := getImageJob(id)
+		if !ok {
+			http.NotFound(w, r)
 			return
 		}
-		if imageModel == "sensenova-u1-8b-fast" {
-			if err := ensureSenseNovaReady(r.Context(), cfg.image, "none"); err != nil {
-				writeError(w, http.StatusConflict, err)
-				return
-			}
-		}
-		if prompt := imagePromptFromContext(r.Context(), cfg, req); prompt != "" {
-			req.Prompt = prompt
-		}
-		releaseOllamaForImage(r.Context(), cfg)
-		if isSenseNovaImageModel(imageModel) {
-			releaseVoiceModelsForImage(r.Context(), cfg)
-		}
-		out, err := generateWithComfyUI(r.Context(), cfg.image, user, req)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, err)
+		writeJSON(w, http.StatusOK, job)
+	}
+}
+
+func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) {
+	imageGenerationMu.Lock()
+	defer imageGenerationMu.Unlock()
+
+	setImageJobStatus(jobID, "running", imageResponse{}, "")
+	ctx := context.Background()
+	settings, err := readUserSettings(cfg, user)
+	if err != nil {
+		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.ImageModel) == "" {
+		req.ImageModel = settings.ImageModel
+	}
+	if strings.TrimSpace(req.Lora) == "" {
+		req.Lora = settings.ImageLora
+	}
+	imageModel := normalizeImageModel(req.ImageModel)
+	if !isSenseNovaImageModel(imageModel) || imageModel == "sensenova-u1-8b-fast" {
+		req.Lora = "none"
+	} else if err := ensureSenseNovaReady(ctx, cfg.image, req.Lora); err != nil {
+		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+		return
+	}
+	if imageModel == "sensenova-u1-8b-fast" {
+		if err := ensureSenseNovaReady(ctx, cfg.image, "none"); err != nil {
+			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+	}
+	if prompt := imagePromptFromContext(ctx, cfg, req); prompt != "" {
+		req.Prompt = prompt
+	}
+	releaseOllamaForImage(ctx, cfg)
+	if isSenseNovaImageModel(imageModel) {
+		releaseVoiceModelsForImage(ctx, cfg)
+	}
+	out, err := generateWithComfyUI(ctx, cfg.image, user, req)
+	if err != nil {
+		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+		return
+	}
+	setImageJobStatus(jobID, "done", out, "")
+}
+
+func newImageJob() imageJob {
+	now := time.Now().UTC()
+	return imageJob{
+		ID:        randomID(),
+		Status:    "queued",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+}
+
+func storeImageJob(job imageJob) {
+	imageJobsMu.Lock()
+	defer imageJobsMu.Unlock()
+	imageJobs[job.ID] = job
+	pruneImageJobsLocked(time.Now().UTC().Add(-2 * time.Hour))
+}
+
+func getImageJob(id string) (imageJob, bool) {
+	imageJobsMu.Lock()
+	defer imageJobsMu.Unlock()
+	job, ok := imageJobs[id]
+	return job, ok
+}
+
+func setImageJobStatus(id, status string, response imageResponse, errorText string) {
+	imageJobsMu.Lock()
+	defer imageJobsMu.Unlock()
+	job, ok := imageJobs[id]
+	if !ok {
+		return
+	}
+	job.Status = status
+	job.Response = response
+	job.Error = errorText
+	job.UpdatedAt = time.Now().UTC()
+	imageJobs[id] = job
+}
+
+func pruneImageJobsLocked(before time.Time) {
+	for id, job := range imageJobs {
+		if job.UpdatedAt.Before(before) {
+			delete(imageJobs, id)
+		}
 	}
 }
 
@@ -995,10 +1077,10 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	}
 	timeout := time.Duration(image.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
-		timeout = 180 * time.Second
+		timeout = 15 * time.Minute
 	}
-	if normalizeImageModel(req.ImageModel) == "sensenova-u1-8b" && timeout < 10*time.Minute {
-		timeout = 10 * time.Minute
+	if timeout < 15*time.Minute {
+		timeout = 15 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

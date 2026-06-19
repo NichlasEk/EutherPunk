@@ -451,9 +451,12 @@ async function generateImage(prompt, displayText = "") {
         context: modelMessages(conversationMessages.slice(-12)),
       }),
     });
-    const payload = await response.json();
+    let payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || response.statusText);
+    }
+    if (payload.job_id) {
+      payload = await waitForImageJob(payload.job_id, assistantNode);
     }
     const generatedImage = { url: payload.url, alt: prompt };
     assistantNode.replaceChildren();
@@ -478,6 +481,42 @@ async function generateImage(prompt, displayText = "") {
     await saveActiveConversation().catch(() => {});
     throw error;
   }
+}
+
+async function waitForImageJob(jobId, assistantNode) {
+  const startedAt = Date.now();
+  let transientFailures = 0;
+  while (Date.now() - startedAt < 15 * 60 * 1000) {
+    await sleep(2000);
+    let response;
+    try {
+      response = await fetch(`/api/eutherpunk/images/jobs/${encodeURIComponent(jobId)}`);
+      transientFailures = 0;
+    } catch (error) {
+      transientFailures += 1;
+      if (transientFailures < 5) {
+        continue;
+      }
+      throw error;
+    }
+    const job = await response.json();
+    if (!response.ok) {
+      throw new Error(job.error || response.statusText);
+    }
+    if (job.status === "done" && job.image) {
+      return job.image;
+    }
+    if (job.status === "error") {
+      throw new Error(job.error || "Bildjobbet misslyckades");
+    }
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    assistantNode.textContent = job.status === "running" ? `Genererar bild... ${elapsed}s` : `Bildjobb i ko... ${elapsed}s`;
+  }
+  throw new Error("Bildjobbet tog for lang tid");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function trimHistory() {
