@@ -377,6 +377,7 @@ async function sendPrompt(prompt, images = []) {
 
   const assistantNode = addMessage("assistant", "");
   let fullText = "";
+  let imageMetadata = "";
 
   try {
     const response = await fetch("/api/eutherpunk/chat/stream", {
@@ -418,6 +419,9 @@ async function sendPrompt(prompt, images = []) {
           assistantNode.textContent = fullText;
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
+        if (chunk.image_metadata) {
+          imageMetadata = chunk.image_metadata;
+        }
       }
     }
   } catch (error) {
@@ -426,6 +430,11 @@ async function sendPrompt(prompt, images = []) {
     throw error;
   }
 
+  if (imageMetadata && userMessage.images.length > 0) {
+    for (const image of userMessage.images) {
+      image.description = imageMetadata;
+    }
+  }
   conversationMessages.push({ role: "assistant", content: fullText, images: [] });
   trimHistory();
   await saveActiveConversation();
@@ -552,12 +561,30 @@ function modelMessages(messages) {
   return messages.map((message, index) => {
     const isLatest = index === messages.length - 1;
     const images = isLatest ? (message.images || []).map((image) => image.ollamaImage).filter(Boolean) : [];
+    const memory = imageMemoryText(message.images || []);
+    const content = memory ? `${message.content}\n\n${memory}`.trim() : message.content;
     return {
       role: message.role,
-      content: message.content,
+      content,
       images,
     };
   });
+}
+
+function imageMemoryText(images) {
+  const descriptions = images
+    .map((image, index) => {
+      const description = (image.description || "").trim();
+      if (!description) {
+        return "";
+      }
+      return `[Dold bildmetadata ${index + 1}: ${description}]`;
+    })
+    .filter(Boolean);
+  if (descriptions.length === 0) {
+    return "";
+  }
+  return descriptions.join("\n");
 }
 
 function normalizeStoredMessages(messages) {
@@ -568,6 +595,7 @@ function normalizeStoredMessages(messages) {
       dataURL: image.dataURL || "",
       url: image.url || "",
       alt: image.alt || "Bild",
+      description: image.description || "",
       ollamaImage: image.ollamaImage || image.ollama_image || "",
     })),
   }));

@@ -127,6 +127,7 @@ type storedConversationImage struct {
 	DataURL     string `json:"dataURL,omitempty"`
 	URL         string `json:"url,omitempty"`
 	Alt         string `json:"alt,omitempty"`
+	Description string `json:"description,omitempty"`
 	OllamaImage string `json:"ollamaImage,omitempty"`
 }
 
@@ -213,10 +214,11 @@ type chatResponse struct {
 }
 
 type streamChunk struct {
-	Model string `json:"model,omitempty"`
-	Delta string `json:"delta,omitempty"`
-	Done  bool   `json:"done,omitempty"`
-	Error string `json:"error,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Delta         string `json:"delta,omitempty"`
+	ImageMetadata string `json:"image_metadata,omitempty"`
+	Done          bool   `json:"done,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 type ollamaChatRequest struct {
@@ -620,7 +622,7 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		if visionRequest {
-			answer, err := askVisionOllama(r.Context(), cfg, system, messages)
+			answer, metadata, err := askVisionOllamaDetailed(r.Context(), cfg, system, messages)
 			encoder := json.NewEncoder(w)
 			if err != nil {
 				_ = encoder.Encode(streamChunk{Model: model, Error: err.Error(), Done: true})
@@ -628,6 +630,9 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			}
 			if answer != "" {
 				_ = encoder.Encode(streamChunk{Model: model, Delta: answer})
+			}
+			if metadata != "" {
+				_ = encoder.Encode(streamChunk{Model: model, ImageMetadata: metadata})
 			}
 			_ = encoder.Encode(streamChunk{Model: model, Done: true})
 			return
@@ -1030,6 +1035,44 @@ func askVisionOllama(ctx context.Context, cfg serverConfig, system string, messa
 		}
 	}
 	return "Jag kunde inte tolka bilden med den nuvarande visionmodellen.", nil
+}
+
+func askVisionOllamaDetailed(ctx context.Context, cfg serverConfig, system string, messages []ollamaMessage) (string, string, error) {
+	answer, err := askVisionOllama(ctx, cfg, system, messages)
+	if err != nil {
+		return "", "", err
+	}
+	metadata, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, visionMetadataSystemPrompt(system), visionMetadataMessages(messages))
+	if err != nil {
+		return answer, "", nil
+	}
+	metadata = normalizeVisionMetadata(metadata)
+	return answer, metadata, nil
+}
+
+func visionMetadataSystemPrompt(base string) string {
+	return base + " Du skriver dold bildmetadata for en annan lokal modell. Beskriv allt relevant i bilden detaljerat pa svenska: huvudmotiv, art/objekt, position, pose, blick, ansiktsuttryck, miljo, bakgrund, farger, ljus, stil, komposition, text i bilden, osakerheter och saker som kan vara viktiga for bildgenerering. Skriv inte som ett svar till anvandaren."
+}
+
+func visionMetadataMessages(messages []ollamaMessage) []ollamaMessage {
+	out := make([]ollamaMessage, 0, len(messages))
+	for _, message := range messages {
+		if len(message.Images) == 0 {
+			continue
+		}
+		out = append(out, ollamaMessage{
+			Role:    "user",
+			Content: "Skapa en riktigt detaljerad dold bildmetadata for bilden. Var konkret. Om bilden visar ett djur, ange trolig art om mojligt och namna osakerhet. Skriv pa svenska.",
+			Images:  message.Images,
+		})
+	}
+	return out
+}
+
+func normalizeVisionMetadata(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, "`")
+	return strings.TrimSpace(value)
 }
 
 func visionFallbackMessages(messages []ollamaMessage, prompt string) []ollamaMessage {
@@ -1780,6 +1823,7 @@ func compactStoredImages(images []storedConversationImage) []storedConversationI
 		image.DataURL = strings.TrimSpace(image.DataURL)
 		image.URL = strings.TrimSpace(image.URL)
 		image.Alt = strings.TrimSpace(image.Alt)
+		image.Description = strings.TrimSpace(image.Description)
 		image.OllamaImage = strings.TrimSpace(image.OllamaImage)
 		if image.DataURL == "" && image.URL == "" && image.OllamaImage == "" {
 			continue
