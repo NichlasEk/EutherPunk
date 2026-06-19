@@ -564,10 +564,7 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		model := req.Model
-		if model == "" {
-			model = chatModel(settings, messages)
-		}
+		model := selectedChatModel(settings, req.Model, messages)
 		visionRequest := isVisionRequest(settings, model, messages)
 		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
@@ -608,10 +605,7 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		model := req.Model
-		if model == "" {
-			model = chatModel(settings, messages)
-		}
+		model := selectedChatModel(settings, req.Model, messages)
 		visionRequest := isVisionRequest(settings, model, messages)
 		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
@@ -2221,6 +2215,17 @@ func chatModel(settings userSettings, messages []ollamaMessage) string {
 		return settings.VisionModel
 	}
 	return settings.ChatModel
+}
+
+func selectedChatModel(settings userSettings, requested string, messages []ollamaMessage) string {
+	if settings.VisionModel != "" && messagesHaveImages(messages) {
+		return settings.VisionModel
+	}
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		return requested
+	}
+	return chatModel(settings, messages)
 }
 
 func isVisionRequest(settings userSettings, model string, messages []ollamaMessage) bool {

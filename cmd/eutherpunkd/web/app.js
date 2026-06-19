@@ -384,7 +384,7 @@ async function sendPrompt(prompt, images = []) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: userSettings.chat_model,
+        model: images.length > 0 ? userSettings.vision_model : userSettings.chat_model,
         messages: modelMessages(conversationMessages),
       }),
     });
