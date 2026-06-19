@@ -56,6 +56,7 @@ type serverConfig struct {
 	configPath     string
 	chatDir        string
 	settingsDir    string
+	promptsPath    string
 	downloadsDir   string
 	eutherOxideURL string
 	voice          config.VoiceConfig
@@ -69,6 +70,20 @@ type chatRequest struct {
 	System   string        `json:"system,omitempty"`
 	Images   []string      `json:"images,omitempty"`
 	Messages []chatMessage `json:"messages,omitempty"`
+}
+
+type promptSettings struct {
+	DefaultSystem             string `json:"default_system"`
+	VisionSystemSuffix        string `json:"vision_system_suffix"`
+	VisionFallbackBrief       string `json:"vision_fallback_brief"`
+	VisionFallbackSubject     string `json:"vision_fallback_subject"`
+	VisionMetadataSystem      string `json:"vision_metadata_system"`
+	VisionMetadataUser        string `json:"vision_metadata_user"`
+	VisionAnswerSystem        string `json:"vision_answer_system"`
+	VisionAnswerUserPrefix    string `json:"vision_answer_user_prefix"`
+	ImageContextRewriteSystem string `json:"image_context_rewrite_system"`
+	ImageContextRewriteUser   string `json:"image_context_rewrite_user"`
+	HiddenImageMemoryTemplate string `json:"hidden_image_memory_template"`
 }
 
 type chatMessage struct {
@@ -285,6 +300,7 @@ func main() {
 		configPath:     appConfig.Path,
 		chatDir:        envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),
 		settingsDir:    envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)),
+		promptsPath:    envOr("EUTHERPUNK_PROMPTS_PATH", defaultPromptsPath(envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)))),
 		downloadsDir:   appConfig.Downloads.Directory,
 		eutherOxideURL: appConfig.EutherOxide.UsersURL,
 		voice:          appConfig.Voice,
@@ -301,6 +317,8 @@ func main() {
 	mux.HandleFunc("GET /api/eutherpunk/users", handleUsers(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/settings", handleSettingsGet(cfg))
 	mux.HandleFunc("PUT /api/eutherpunk/settings", handleSettingsPut(cfg))
+	mux.HandleFunc("GET /api/eutherpunk/admin/prompts", handlePromptsGet(cfg))
+	mux.HandleFunc("PUT /api/eutherpunk/admin/prompts", handlePromptsPut(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/conversations", handleConversationList(cfg))
 	mux.HandleFunc("GET /api/eutherpunk/conversations/{id}", handleConversationGet(cfg))
 	mux.HandleFunc("PUT /api/eutherpunk/conversations/{id}", handleConversationPut(cfg))
@@ -459,6 +477,60 @@ func handleSettingsPut(cfg serverConfig) http.HandlerFunc {
 	}
 }
 
+func handlePromptsGet(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		prompts, raw, err := readPromptSettings(cfg.promptsPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"path":    cfg.promptsPath,
+			"prompts": prompts,
+			"toml":    raw,
+		})
+	}
+}
+
+func handlePromptsPut(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TOML string `json:"toml"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		raw := strings.TrimSpace(req.TOML)
+		if raw == "" {
+			writeError(w, http.StatusBadRequest, errors.New("toml is required"))
+			return
+		}
+		if _, err := parsePromptSettings(raw); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(cfg.promptsPath), 0o755); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := os.WriteFile(cfg.promptsPath, []byte(raw+"\n"), 0o600); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		prompts, _, err := readPromptSettings(cfg.promptsPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"path":    cfg.promptsPath,
+			"prompts": prompts,
+			"toml":    raw,
+		})
+	}
+}
+
 func handleConversationList(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := requestUser(r, cfg)
@@ -564,17 +636,22 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		prompts, _, err := readPromptSettings(cfg.promptsPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		model := selectedChatModel(settings, req.Model, messages)
 		visionRequest := isVisionRequest(settings, model, messages)
 		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
 		if system == "" {
-			system = systemPromptForMessages(defaultSystemPrompt, messages)
+			system = systemPromptForMessages(prompts, messages)
 		}
 
 		var answer string
 		if visionRequest {
-			answer, err = askVisionOllama(r.Context(), cfg, system, messages)
+			answer, err = askVisionOllama(r.Context(), cfg, prompts, system, messages)
 		} else {
 			answer, err = askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
 		}
@@ -605,18 +682,23 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		prompts, _, err := readPromptSettings(cfg.promptsPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 		model := selectedChatModel(settings, req.Model, messages)
 		visionRequest := isVisionRequest(settings, model, messages)
 		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
 		if system == "" {
-			system = systemPromptForMessages(defaultSystemPrompt, messages)
+			system = systemPromptForMessages(prompts, messages)
 		}
 
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		if visionRequest {
-			answer, metadata, err := askVisionOllamaDetailed(r.Context(), cfg, system, messages)
+			answer, metadata, err := askVisionOllamaDetailed(r.Context(), cfg, prompts, system, messages)
 			encoder := json.NewEncoder(w)
 			if err != nil {
 				_ = encoder.Encode(streamChunk{Model: model, Error: err.Error(), Done: true})
@@ -832,10 +914,16 @@ func imagePromptFromContext(ctx context.Context, cfg serverConfig, req imageRequ
 	if len(messages) == 0 {
 		return req.Prompt
 	}
-	system := "You convert a chat conversation into one concise English prompt for an image generator. Use the latest user request as the instruction, include relevant visual context from earlier messages or images, and return only the final image prompt with no markdown or explanations."
+	prompts, _, err := readPromptSettings(cfg.promptsPath)
+	if err != nil {
+		log.Printf("image prompt context prompts failed: %v", err)
+		prompts = defaultPromptSettings()
+	}
+	system := prompts.ImageContextRewriteSystem
+	userPrompt := strings.ReplaceAll(prompts.ImageContextRewriteUser, "{{prompt}}", req.Prompt)
 	messages = append(messages, ollamaMessage{
 		Role:    "user",
-		Content: "Final image request: " + req.Prompt + "\nWrite the image generation prompt.",
+		Content: userPrompt,
 	})
 	model := cfg.model
 	if cfg.visionModel != "" && messagesHaveImages(messages) {
@@ -1009,7 +1097,7 @@ func askOllama(ctx context.Context, ollamaURL, model, system string, messages []
 	return out.Message.Content, nil
 }
 
-func askVisionOllama(ctx context.Context, cfg serverConfig, system string, messages []ollamaMessage) (string, error) {
+func askVisionOllama(ctx context.Context, cfg serverConfig, prompts promptSettings, system string, messages []ollamaMessage) (string, error) {
 	answer, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, messages)
 	if err != nil {
 		return "", err
@@ -1018,7 +1106,7 @@ func askVisionOllama(ctx context.Context, cfg serverConfig, system string, messa
 	if answer != "" {
 		return answer, nil
 	}
-	for _, prompt := range []string{"Describe the image briefly in Swedish.", "What is the main subject of this image? Answer in Swedish."} {
+	for _, prompt := range []string{prompts.VisionFallbackBrief, prompts.VisionFallbackSubject} {
 		answer, err = askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, visionFallbackMessages(messages, prompt))
 		if err != nil {
 			return "", err
@@ -1031,31 +1119,31 @@ func askVisionOllama(ctx context.Context, cfg serverConfig, system string, messa
 	return "Jag kunde inte tolka bilden med den nuvarande visionmodellen.", nil
 }
 
-func askVisionOllamaDetailed(ctx context.Context, cfg serverConfig, system string, messages []ollamaMessage) (string, string, error) {
-	answer, err := askVisionOllama(ctx, cfg, system, messages)
+func askVisionOllamaDetailed(ctx context.Context, cfg serverConfig, prompts promptSettings, system string, messages []ollamaMessage) (string, string, error) {
+	answer, err := askVisionOllama(ctx, cfg, prompts, system, messages)
 	if err != nil {
 		return "", "", err
 	}
-	metadata, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, visionMetadataSystemPrompt(system), visionMetadataMessages(messages))
+	metadata, err := askOllama(ctx, cfg.ollamaURL, cfg.visionModel, visionMetadataSystemPrompt(system, prompts), visionMetadataMessages(messages, prompts))
 	if err != nil {
-		return localizeVisionAnswer(ctx, cfg, answer), answer, nil
+		return localizeVisionAnswer(ctx, cfg, prompts, answer), answer, nil
 	}
 	metadata = normalizeVisionMetadata(metadata)
 	if metadata == "" {
 		metadata = answer
 	}
-	answer = localizeVisionAnswer(ctx, cfg, answer)
+	answer = localizeVisionAnswer(ctx, cfg, prompts, answer)
 	return answer, metadata, nil
 }
 
-func localizeVisionAnswer(ctx context.Context, cfg serverConfig, answer string) string {
+func localizeVisionAnswer(ctx context.Context, cfg serverConfig, prompts promptSettings, answer string) string {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		return ""
 	}
-	localized, err := askOllama(ctx, cfg.ollamaURL, cfg.model, "Du skriver om bildtolkningar till kort, naturlig svenska. Behall sakuppgifter. Lagg inte till nya detaljer.", []ollamaMessage{{
+	localized, err := askOllama(ctx, cfg.ollamaURL, cfg.model, prompts.VisionAnswerSystem, []ollamaMessage{{
 		Role:    "user",
-		Content: "Skriv detta pa svenska, kort och konkret: " + answer,
+		Content: prompts.VisionAnswerUserPrefix + answer,
 	}})
 	if err != nil {
 		return answer
@@ -1067,11 +1155,11 @@ func localizeVisionAnswer(ctx context.Context, cfg serverConfig, answer string) 
 	return localized
 }
 
-func visionMetadataSystemPrompt(base string) string {
-	return base + " Du skriver dold bildmetadata for en annan lokal modell. Beskriv allt relevant i bilden detaljerat pa svenska: huvudmotiv, art/objekt, position, pose, blick, ansiktsuttryck, miljo, bakgrund, farger, ljus, stil, komposition, text i bilden, osakerheter och saker som kan vara viktiga for bildgenerering. Skriv inte som ett svar till anvandaren."
+func visionMetadataSystemPrompt(base string, prompts promptSettings) string {
+	return base + " " + prompts.VisionMetadataSystem
 }
 
-func visionMetadataMessages(messages []ollamaMessage) []ollamaMessage {
+func visionMetadataMessages(messages []ollamaMessage, prompts promptSettings) []ollamaMessage {
 	out := make([]ollamaMessage, 0, len(messages))
 	for _, message := range messages {
 		if len(message.Images) == 0 {
@@ -1079,7 +1167,7 @@ func visionMetadataMessages(messages []ollamaMessage) []ollamaMessage {
 		}
 		out = append(out, ollamaMessage{
 			Role:    "user",
-			Content: "Skapa en riktigt detaljerad dold bildmetadata for bilden. Var konkret. Om bilden visar ett djur, ange trolig art om mojligt och namna osakerhet. Skriv pa svenska.",
+			Content: prompts.VisionMetadataUser,
 			Images:  message.Images,
 		})
 	}
@@ -1568,6 +1656,146 @@ func readUserSettings(cfg serverConfig, user string) (userSettings, error) {
 	}
 	finalizeUserSettings(&settings)
 	return settings, nil
+}
+
+func defaultPromptsPath(settingsDir string) string {
+	return filepath.Join(settingsDirectory(settingsDir), "prompts.toml")
+}
+
+func defaultPromptSettings() promptSettings {
+	return promptSettings{
+		DefaultSystem:             defaultSystemPrompt,
+		VisionSystemSuffix:        "Nar anvandaren visar en bild, beskriv och resonera om bilden pa anvandarens sprak. Beskriv huvudmotiv, miljo, synliga objekt, text/markeringar och relevant osakerhet. Hitta inte pa saker du inte ser.",
+		VisionFallbackBrief:       "Describe the image briefly in Swedish.",
+		VisionFallbackSubject:     "What is the main subject of this image? Answer in Swedish.",
+		VisionMetadataSystem:      "Du skriver dold bildmetadata for en annan lokal modell. Beskriv allt relevant i bilden detaljerat pa svenska: huvudmotiv, art/objekt, position, pose, blick, ansiktsuttryck, miljo, bakgrund, farger, ljus, stil, komposition, text i bilden, osakerheter och saker som kan vara viktiga for bildgenerering. Skriv inte som ett svar till anvandaren.",
+		VisionMetadataUser:        "Skapa en riktigt detaljerad dold bildmetadata for bilden. Var konkret. Om bilden visar ett djur, ange trolig art om mojligt och namna osakerhet. Skriv pa svenska.",
+		VisionAnswerSystem:        "Du skriver om bildtolkningar till kort, naturlig svenska. Behall sakuppgifter. Lagg inte till nya detaljer.",
+		VisionAnswerUserPrefix:    "Skriv detta pa svenska, kort och konkret: ",
+		ImageContextRewriteSystem: "You convert a chat conversation into one concise English prompt for an image generator. Use the latest user request as the instruction, include relevant visual context from earlier messages or images, and return only the final image prompt with no markdown or explanations.",
+		ImageContextRewriteUser:   "Final image request: {{prompt}}\nWrite the image generation prompt.",
+		HiddenImageMemoryTemplate: "Intern bildmetadata {{index}}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: {{description}}",
+	}
+}
+
+func readPromptSettings(path string) (promptSettings, string, error) {
+	defaults := defaultPromptSettings()
+	rawBytes, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		raw := formatPromptSettings(defaults)
+		return defaults, raw, nil
+	}
+	if err != nil {
+		return defaults, "", err
+	}
+	raw := string(rawBytes)
+	prompts, err := parsePromptSettings(raw)
+	if err != nil {
+		return defaults, raw, err
+	}
+	return prompts, raw, nil
+}
+
+func parsePromptSettings(raw string) (promptSettings, error) {
+	prompts := defaultPromptSettings()
+	section := ""
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for lineNo := 1; scanner.Scan(); lineNo++ {
+		line := stripTomlComment(scanner.Text())
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+			continue
+		}
+		if section != "prompts" {
+			return prompts, fmt.Errorf("line %d: expected [prompts] section", lineNo)
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return prompts, fmt.Errorf("line %d: expected key = value", lineNo)
+		}
+		parsed, err := strconv.Unquote(strings.TrimSpace(value))
+		if err != nil {
+			return prompts, fmt.Errorf("line %d: %w", lineNo, err)
+		}
+		switch strings.TrimSpace(key) {
+		case "default_system":
+			prompts.DefaultSystem = parsed
+		case "vision_system_suffix":
+			prompts.VisionSystemSuffix = parsed
+		case "vision_fallback_brief":
+			prompts.VisionFallbackBrief = parsed
+		case "vision_fallback_subject":
+			prompts.VisionFallbackSubject = parsed
+		case "vision_metadata_system":
+			prompts.VisionMetadataSystem = parsed
+		case "vision_metadata_user":
+			prompts.VisionMetadataUser = parsed
+		case "vision_answer_system":
+			prompts.VisionAnswerSystem = parsed
+		case "vision_answer_user_prefix":
+			prompts.VisionAnswerUserPrefix = parsed
+		case "image_context_rewrite_system":
+			prompts.ImageContextRewriteSystem = parsed
+		case "image_context_rewrite_user":
+			prompts.ImageContextRewriteUser = parsed
+		case "hidden_image_memory_template":
+			prompts.HiddenImageMemoryTemplate = parsed
+		default:
+			return prompts, fmt.Errorf("line %d: unknown prompt key %q", lineNo, strings.TrimSpace(key))
+		}
+	}
+	return prompts, scanner.Err()
+}
+
+func formatPromptSettings(prompts promptSettings) string {
+	var b strings.Builder
+	b.WriteString("[prompts]\n")
+	writePromptString(&b, "default_system", prompts.DefaultSystem)
+	writePromptString(&b, "vision_system_suffix", prompts.VisionSystemSuffix)
+	writePromptString(&b, "vision_fallback_brief", prompts.VisionFallbackBrief)
+	writePromptString(&b, "vision_fallback_subject", prompts.VisionFallbackSubject)
+	writePromptString(&b, "vision_metadata_system", prompts.VisionMetadataSystem)
+	writePromptString(&b, "vision_metadata_user", prompts.VisionMetadataUser)
+	writePromptString(&b, "vision_answer_system", prompts.VisionAnswerSystem)
+	writePromptString(&b, "vision_answer_user_prefix", prompts.VisionAnswerUserPrefix)
+	writePromptString(&b, "image_context_rewrite_system", prompts.ImageContextRewriteSystem)
+	writePromptString(&b, "image_context_rewrite_user", prompts.ImageContextRewriteUser)
+	writePromptString(&b, "hidden_image_memory_template", prompts.HiddenImageMemoryTemplate)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func writePromptString(b *strings.Builder, key, value string) {
+	b.WriteString(key)
+	b.WriteString(" = ")
+	b.WriteString(strconv.Quote(value))
+	b.WriteByte('\n')
+}
+
+func stripTomlComment(line string) string {
+	inString := false
+	escaped := false
+	for i, r := range line {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			inString = !inString
+			continue
+		}
+		if r == '#' && !inString {
+			return line[:i]
+		}
+	}
+	return line
 }
 
 func writeUserSettings(root, user string, settings userSettings) error {
@@ -2240,9 +2468,10 @@ func requestMessages(req chatRequest) []ollamaMessage {
 	}}
 }
 
-func systemPromptForMessages(base string, messages []ollamaMessage) string {
+func systemPromptForMessages(prompts promptSettings, messages []ollamaMessage) string {
+	base := prompts.DefaultSystem
 	if messagesHaveImages(messages) {
-		return base + " Nar anvandaren visar en bild, beskriv och resonera om bilden pa anvandarens sprak. Beskriv huvudmotiv, miljo, synliga objekt, text/markeringar och relevant osakerhet. Hitta inte pa saker du inte ser."
+		return base + " " + prompts.VisionSystemSuffix
 	}
 	return base
 }

@@ -69,10 +69,25 @@
           <input id="voiceBackendInput" name="voice_backend" autocomplete="off">
         </label>
         <div class="settingsActions">
+          <button id="promptAdminButton" type="button">Prompt-TOML</button>
           <button id="settingsSaveButton" type="submit">Spara</button>
         </div>
       </form>
     </dialog>
-    <script src="/web/app.js?v=20260619-image-jobs"></script>
+    <dialog id="promptAdminDialog" class="settingsDialog promptAdminDialog">
+      <form id="promptAdminForm" method="dialog">
+        <div class="settingsHead">
+          <strong>Prompt-TOML</strong>
+          <button id="promptAdminCloseButton" type="button" aria-label="Stäng">×</button>
+        </div>
+        <p id="promptAdminPath" class="settingsHint"></p>
+        <textarea id="promptAdminText" rows="18" spellcheck="false"></textarea>
+        <div class="settingsActions">
+          <button id="promptAdminReloadButton" type="button">Ladda om</button>
+          <button id="promptAdminSaveButton" type="submit">Spara TOML</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="/web/app.js?v=20260619-prompt-admin"></script>
   </body>
 </html>

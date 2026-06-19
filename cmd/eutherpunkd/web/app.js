@@ -13,6 +13,14 @@ const settingsButton = document.querySelector("#settingsButton");
 const settingsDialog = document.querySelector("#settingsDialog");
 const settingsForm = document.querySelector("#settingsForm");
 const settingsCloseButton = document.querySelector("#settingsCloseButton");
+const promptAdminButton = document.querySelector("#promptAdminButton");
+const promptAdminDialog = document.querySelector("#promptAdminDialog");
+const promptAdminForm = document.querySelector("#promptAdminForm");
+const promptAdminCloseButton = document.querySelector("#promptAdminCloseButton");
+const promptAdminReloadButton = document.querySelector("#promptAdminReloadButton");
+const promptAdminSaveButton = document.querySelector("#promptAdminSaveButton");
+const promptAdminText = document.querySelector("#promptAdminText");
+const promptAdminPath = document.querySelector("#promptAdminPath");
 const chatModelInput = document.querySelector("#chatModelInput");
 const visionModelInput = document.querySelector("#visionModelInput");
 const imageModelSelect = document.querySelector("#imageModelSelect");
@@ -48,6 +56,10 @@ let imageModels = [
   { id: "sensenova-u1-8b", label: "SenseNova U1 8B" },
 ];
 let imageLoras = ["none"];
+let promptSettings = {
+  hidden_image_memory_template:
+    "Intern bildmetadata {{index}}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: {{description}}",
+};
 
 function newConversationId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
@@ -89,6 +101,36 @@ async function loadSettings() {
   serverVoiceEnabled = Boolean(userSettings.server_voice_enabled);
   renderVoiceToggles();
   renderSettingsForm();
+}
+
+async function loadPromptAdmin() {
+  const response = await fetch("/api/eutherpunk/admin/prompts");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || response.statusText);
+  }
+  promptSettings = { ...promptSettings, ...(payload.prompts || {}) };
+  if (promptAdminText) {
+    promptAdminText.value = payload.toml || "";
+  }
+  if (promptAdminPath) {
+    promptAdminPath.textContent = payload.path || "";
+  }
+}
+
+async function savePromptAdmin() {
+  const response = await fetch("/api/eutherpunk/admin/prompts", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toml: promptAdminText.value }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || response.statusText);
+  }
+  promptSettings = { ...promptSettings, ...(payload.prompts || {}) };
+  promptAdminText.value = payload.toml || promptAdminText.value;
+  promptAdminPath.textContent = payload.path || "";
 }
 
 function renderSettingsForm() {
@@ -580,13 +622,19 @@ function imageMemoryText(images) {
       if (!description) {
         return "";
       }
-      return `[Intern bildmetadata ${index + 1}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: ${description}]`;
+      return `[${formatHiddenImageMemory(index + 1, description)}]`;
     })
     .filter(Boolean);
   if (descriptions.length === 0) {
     return "";
   }
   return descriptions.join("\n");
+}
+
+function formatHiddenImageMemory(index, description) {
+  return (promptSettings.hidden_image_memory_template || "")
+    .replaceAll("{{index}}", String(index))
+    .replaceAll("{{description}}", description);
 }
 
 function storedImageMetadataText() {
@@ -945,6 +993,43 @@ settingsCloseButton.addEventListener("click", () => {
   settingsDialog.close();
 });
 
+promptAdminButton.addEventListener("click", async () => {
+  try {
+    await loadPromptAdmin();
+    promptAdminDialog.showModal();
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  }
+});
+
+promptAdminCloseButton.addEventListener("click", () => {
+  promptAdminDialog.close();
+});
+
+promptAdminReloadButton.addEventListener("click", async () => {
+  promptAdminReloadButton.disabled = true;
+  try {
+    await loadPromptAdmin();
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  } finally {
+    promptAdminReloadButton.disabled = false;
+  }
+});
+
+promptAdminForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  promptAdminSaveButton.disabled = true;
+  try {
+    await savePromptAdmin();
+    promptAdminDialog.close();
+  } catch (error) {
+    addMessage("assistant", `Fel: ${error.message}`);
+  } finally {
+    promptAdminSaveButton.disabled = false;
+  }
+});
+
 settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   settingsSaveButton.disabled = true;
@@ -991,6 +1076,7 @@ loadStatus();
 loadSettings().catch((error) => {
   statusEl.textContent = `Settings offline: ${error.message}`;
 });
+loadPromptAdmin().catch(() => {});
 loadConversationList().catch((error) => {
   statusEl.textContent = `Historik offline: ${error.message}`;
 });

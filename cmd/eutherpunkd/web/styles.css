@@ -369,6 +369,28 @@ select {
   margin-left: auto;
 }
 
+#promptAdminButton {
+  margin-right: auto;
+}
+
+.promptAdminDialog {
+  width: min(900px, calc(100vw - 28px));
+}
+
+.settingsHint {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+#promptAdminText {
+  min-height: 48vh;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.42;
+  white-space: pre;
+}
+
 @media (max-width: 640px) {
   .shell {
     grid-template-columns: 1fr;
