@@ -1492,7 +1492,7 @@ func readUserSettings(cfg serverConfig, user string) (userSettings, error) {
 			settings.ServerVoiceEnabled = mustTOMLBool(strings.TrimSpace(raw))
 		}
 	}
-	mergeUserSettings(&settings, userSettings{})
+	finalizeUserSettings(&settings)
 	return settings, nil
 }
 
@@ -1525,8 +1525,8 @@ func mergeUserSettings(settings *userSettings, incoming userSettings) {
 	if value := strings.TrimSpace(incoming.VisionModel); value != "" {
 		settings.VisionModel = value
 	}
-	if value := normalizeImageModel(incoming.ImageModel); value != "" {
-		settings.ImageModel = value
+	if strings.TrimSpace(incoming.ImageModel) != "" {
+		settings.ImageModel = normalizeImageModel(incoming.ImageModel)
 	}
 	if incoming.ImageLora != "" {
 		settings.ImageLora = normalizeLora(incoming.ImageLora)
@@ -1536,6 +1536,10 @@ func mergeUserSettings(settings *userSettings, incoming userSettings) {
 	}
 	settings.TTSEnabled = incoming.TTSEnabled
 	settings.ServerVoiceEnabled = incoming.ServerVoiceEnabled
+	finalizeUserSettings(settings)
+}
+
+func finalizeUserSettings(settings *userSettings) {
 	if settings.ChatModel == "" {
 		settings.ChatModel = "qwen3-coder:30b"
 	}
