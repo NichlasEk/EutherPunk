@@ -578,13 +578,45 @@ function imageMemoryText(images) {
       if (!description) {
         return "";
       }
-      return `[Dold bildmetadata ${index + 1}: ${description}]`;
+      return `[Intern bildmetadata ${index + 1}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: ${description}]`;
     })
     .filter(Boolean);
   if (descriptions.length === 0) {
     return "";
   }
   return descriptions.join("\n");
+}
+
+function storedImageMetadataText() {
+  const entries = [];
+  for (const message of conversationMessages) {
+    for (const image of message.images || []) {
+      const description = (image.description || "").trim();
+      if (!description) {
+        continue;
+      }
+      const label = image.alt && image.alt !== "Bild" ? image.alt : `Bild ${entries.length + 1}`;
+      entries.push(`${label}:\n${description}`);
+    }
+  }
+  return entries.join("\n\n");
+}
+
+function isImageMetadataRequest(prompt) {
+  const value = prompt.toLowerCase();
+  return /\b(metadata|metadatan|bildmetadata|bildmetadatan)\b/.test(value) && /\b(visa|visar|kolla|se|skriv|ge|printa)\b/.test(value);
+}
+
+async function showStoredImageMetadata(prompt) {
+  const userMessage = { role: "user", content: prompt, images: [] };
+  addMessage("user", userMessage.content);
+  conversationMessages.push(userMessage);
+  const metadata = storedImageMetadataText();
+  const answer = metadata || "Det finns ingen sparad bildmetadata i den här chatten ännu.";
+  addMessage("assistant", answer);
+  conversationMessages.push({ role: "assistant", content: answer, images: [] });
+  trimHistory();
+  await saveActiveConversation();
 }
 
 function normalizeStoredMessages(messages) {
@@ -708,7 +740,9 @@ form.addEventListener("submit", async (event) => {
   form.querySelector("button[type='submit']").disabled = true;
   try {
     const imageRequest = parseImageRequest(prompt);
-    if (images.length === 0 && imageRequest) {
+    if (images.length === 0 && isImageMetadataRequest(prompt)) {
+      await showStoredImageMetadata(prompt);
+    } else if (images.length === 0 && imageRequest) {
       await generateImage(imageRequest.prompt, imageRequest.displayText);
     } else {
       await sendPrompt(prompt, images);
