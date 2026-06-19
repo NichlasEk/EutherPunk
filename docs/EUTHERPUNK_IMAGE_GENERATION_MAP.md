@@ -99,9 +99,24 @@ The EutherPunk workflow uses these ComfyUI node classes:
 The SenseNova sampler is configured conservatively for the shared workstation:
 
 - `batch_size = 1`
-- `prefetch_count = 0`
+- `prefetch_count = 1`
+- `max_new_tokens = 256`
 - `steps = 4` unless overridden by config/request
 - output target is selected from `1:1`, `16:9`, or `9:16` based on requested dimensions
+
+Before a SenseNova job is queued, EutherPunk asks EutherLink to release idle voice
+resources through:
+
+- `POST /v1/resources/voxcpm2/unload`
+
+Dots TTS is intentionally kept warm so server voice stays available. This means
+SenseNova relies on conservative sampler settings and swap headroom instead of
+fully clearing the TTS worker from memory.
+
+The workstation also has a Btrfs-compatible persistent swap file:
+
+- `/swapfile-eutherpunk`, 32 GiB
+- `/etc/fstab`: `/swapfile-eutherpunk none swap defaults,pri=10 0 0`
 
 If the node rejects the workflow, verify node registration after a ComfyUI restart:
 
@@ -170,6 +185,7 @@ Expected result: JSON with `url`, `user`, `filename`, and `prompt_id`. The file 
 
 - `connection refused` to `127.0.0.1:11434` on server: local Ollama reverse tunnel is down.
 - `connection refused` to `192.168.32.88:8188`: ComfyUI is down or bound to the wrong address.
+- `connection refused` after a long SenseNova wait: check `journalctl --user -u comfyui.service`; OOM-kill means RAM/swap/resource release failed before or during the job.
 - `EnvironmentNameNotFound: comfyui`: restore the `.venv` based ComfyUI service.
 - ComfyUI `node_errors` for Z-Image: verify `/object_info` still lists `UNETLoader`, `CLIPLoader`, `VAELoader`, `EmptySD3LatentImage`, `KSampler`, and `PreviewImage`.
 - ComfyUI `node_errors` for SenseNova: verify `/object_info` still lists `SenseNova_SM_Model` and `SenseNova_SM_Sampler`, and that the GGUF and LoRA files exist in the paths above.

@@ -716,7 +716,8 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 		if strings.TrimSpace(req.Lora) == "" {
 			req.Lora = settings.ImageLora
 		}
-		if normalizeImageModel(req.ImageModel) != "sensenova-u1-8b" {
+		imageModel := normalizeImageModel(req.ImageModel)
+		if imageModel != "sensenova-u1-8b" {
 			req.Lora = "none"
 		} else if err := ensureSenseNovaReady(r.Context(), cfg.image, req.Lora); err != nil {
 			writeError(w, http.StatusConflict, err)
@@ -726,6 +727,9 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 			req.Prompt = prompt
 		}
 		releaseOllamaForImage(r.Context(), cfg)
+		if imageModel == "sensenova-u1-8b" {
+			releaseVoiceModelsForImage(r.Context(), cfg)
+		}
 		out, err := generateWithComfyUI(r.Context(), cfg.image, user, req)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err)
@@ -783,6 +787,40 @@ func releaseOllamaForImage(ctx context.Context, cfg serverConfig) {
 			log.Printf("ollama unload %s before image generation failed: %v", model, err)
 		}
 	}
+}
+
+func releaseVoiceModelsForImage(ctx context.Context, cfg serverConfig) {
+	baseURL := strings.TrimRight(cfg.voice.EutherLinkURL, "/")
+	if baseURL == "" {
+		return
+	}
+	endpoints := []string{
+		"/v1/resources/voxcpm2/unload",
+	}
+	for _, endpoint := range endpoints {
+		if err := postResourceAction(ctx, baseURL+endpoint); err != nil {
+			log.Printf("voice resource release %s before SenseNova image generation failed: %v", endpoint, err)
+		}
+	}
+}
+
+func postResourceAction(ctx context.Context, endpoint string) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("resource action returned %s: %s", resp.Status, string(body))
+	}
+	return nil
 }
 
 func unloadOllamaModel(ctx context.Context, ollamaURL, model string) error {
