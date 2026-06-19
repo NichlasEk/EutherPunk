@@ -79,6 +79,15 @@ The EutherPunk workflow uses these ComfyUI node classes:
 
 SenseNova is optional and selectable per user in the EutherPunk settings dialog. Z-Image remains the default image model.
 
+Available EutherPunk SenseNova profiles:
+
+- `sensenova-u1-8b-fast`: uses ComfyUI `interleave` mode without LoRA. For `1:1`
+  this targets the node's 1536 x 1536 bucket and is the preferred chat-speed
+  SenseNova profile while Dots TTS stays warm.
+- `sensenova-u1-8b`: uses ComfyUI T2I/edit path and allows the SenseNova LoRA.
+  For `1:1` this targets 2048 x 2048 and can take several minutes on the shared
+  workstation.
+
 ComfyUI custom node:
 
 ```sh

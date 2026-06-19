@@ -410,6 +410,7 @@ func handleSettingsGet(cfg serverConfig) http.HandlerFunc {
 			"settings": settings,
 			"image_models": []map[string]string{
 				{"id": "z-image-turbo", "label": "Z-Image Turbo"},
+				{"id": "sensenova-u1-8b-fast", "label": senseNovaLabel + " snabb"},
 				{"id": "sensenova-u1-8b", "label": senseNovaLabel},
 			},
 		})
@@ -717,17 +718,23 @@ func handleImageGenerate(cfg serverConfig) http.HandlerFunc {
 			req.Lora = settings.ImageLora
 		}
 		imageModel := normalizeImageModel(req.ImageModel)
-		if imageModel != "sensenova-u1-8b" {
+		if !isSenseNovaImageModel(imageModel) || imageModel == "sensenova-u1-8b-fast" {
 			req.Lora = "none"
 		} else if err := ensureSenseNovaReady(r.Context(), cfg.image, req.Lora); err != nil {
 			writeError(w, http.StatusConflict, err)
 			return
 		}
+		if imageModel == "sensenova-u1-8b-fast" {
+			if err := ensureSenseNovaReady(r.Context(), cfg.image, "none"); err != nil {
+				writeError(w, http.StatusConflict, err)
+				return
+			}
+		}
 		if prompt := imagePromptFromContext(r.Context(), cfg, req); prompt != "" {
 			req.Prompt = prompt
 		}
 		releaseOllamaForImage(r.Context(), cfg)
-		if imageModel == "sensenova-u1-8b" {
+		if isSenseNovaImageModel(imageModel) {
 			releaseVoiceModelsForImage(r.Context(), cfg)
 		}
 		out, err := generateWithComfyUI(r.Context(), cfg.image, user, req)
@@ -1055,12 +1062,10 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 }
 
 func buildImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
-	switch normalizeImageModel(req.ImageModel) {
-	case "sensenova-u1-8b":
+	if isSenseNovaImageModel(req.ImageModel) {
 		return buildSenseNovaPrompt(image, req)
-	default:
-		return buildZImagePrompt(image, req)
 	}
+	return buildZImagePrompt(image, req)
 }
 
 func ensureSenseNovaReady(ctx context.Context, image config.ImageConfig, lora string) error {
@@ -1164,6 +1169,8 @@ func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]a
 }
 
 func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
+	imageModel := normalizeImageModel(req.ImageModel)
+	fastMode := imageModel == "sensenova-u1-8b-fast"
 	steps := defaultImageSteps(req.Steps, image.DefaultSteps)
 	if steps < 1 {
 		steps = 1
@@ -1179,6 +1186,9 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 	if lora == "" {
 		lora = "none"
 	}
+	if fastMode {
+		lora = "none"
+	}
 	targetPixels := "1:1"
 	width := defaultImageDimension(req.Width, image.DefaultWidth, safeImageDefaultWidth)
 	height := defaultImageDimension(req.Height, image.DefaultHeight, safeImageDefaultHeight)
@@ -1186,6 +1196,12 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 		targetPixels = "16:9"
 	} else if height > width {
 		targetPixels = "9:16"
+	}
+	imgMode := "edit"
+	interleaveMax := 2
+	if fastMode {
+		imgMode = "interleave"
+		interleaveMax = 1
 	}
 	return map[string]any{
 		"1": comfyNode("SenseNova_SM_Model", map[string]any{
@@ -1196,7 +1212,7 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 		}),
 		"2": comfyNode("SenseNova_SM_Sampler", map[string]any{
 			"model":              []any{"1", 0},
-			"img_mode":           "edit",
+			"img_mode":           imgMode,
 			"prompt":             req.Prompt,
 			"seed":               int(seed % maxComfySeed),
 			"steps":              steps,
@@ -1206,7 +1222,7 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 			"timestep_shift":     3.0,
 			"batch_size":         1,
 			"prefetch_count":     1,
-			"interleave_max":     2,
+			"interleave_max":     interleaveMax,
 			"cfg_norm":           "none",
 			"enhance":            false,
 			"think_mode":         false,
@@ -1446,7 +1462,7 @@ func mergeUserSettings(settings *userSettings, incoming userSettings) {
 	}
 	settings.ImageModel = normalizeImageModel(settings.ImageModel)
 	settings.ImageLora = normalizeLora(settings.ImageLora)
-	if settings.ImageModel != "sensenova-u1-8b" {
+	if !isSenseNovaImageModel(settings.ImageModel) || settings.ImageModel == "sensenova-u1-8b-fast" {
 		settings.ImageLora = "none"
 	}
 }
@@ -1457,8 +1473,19 @@ func normalizeImageModel(value string) string {
 		return "z-image-turbo"
 	case "sensenova", "sensenova-u1", "sensenova-u1-8b":
 		return "sensenova-u1-8b"
+	case "sensenova-fast", "sensenova-u1-fast", "sensenova-u1-8b-fast":
+		return "sensenova-u1-8b-fast"
 	default:
 		return "z-image-turbo"
+	}
+}
+
+func isSenseNovaImageModel(value string) bool {
+	switch normalizeImageModel(value) {
+	case "sensenova-u1-8b", "sensenova-u1-8b-fast":
+		return true
+	default:
+		return false
 	}
 }
 

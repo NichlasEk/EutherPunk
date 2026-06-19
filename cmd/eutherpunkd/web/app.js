@@ -44,6 +44,7 @@ let userSettings = {
 };
 let imageModels = [
   { id: "z-image-turbo", label: "Z-Image Turbo" },
+  { id: "sensenova-u1-8b-fast", label: "SenseNova U1 8B snabb" },
   { id: "sensenova-u1-8b", label: "SenseNova U1 8B" },
 ];
 let imageLoras = ["none"];
@@ -133,7 +134,7 @@ async function saveRuntimeSettings() {
     chat_model: userSettings.chat_model,
     vision_model: userSettings.vision_model,
     image_model: userSettings.image_model,
-    image_lora: userSettings.image_lora,
+    image_lora: userSettings.image_model === "sensenova-u1-8b" ? userSettings.image_lora : "none",
     voice_backend: userSettings.voice_backend,
     tts_enabled: ttsEnabled,
     server_voice_enabled: serverVoiceEnabled,
