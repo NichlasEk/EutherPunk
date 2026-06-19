@@ -1018,7 +1018,7 @@ func askVisionOllama(ctx context.Context, cfg serverConfig, system string, messa
 	if answer != "" {
 		return answer, nil
 	}
-	for _, prompt := range []string{"What animal is shown?", "What is the main animal shown?"} {
+	for _, prompt := range []string{"Describe the image briefly in Swedish.", "What is the main subject of this image? Answer in Swedish."} {
 		answer, err = askOllama(ctx, cfg.ollamaURL, cfg.visionModel, system, visionFallbackMessages(messages, prompt))
 		if err != nil {
 			return "", err
@@ -1088,6 +1088,9 @@ func visionFallbackMessages(messages []ollamaMessage, prompt string) []ollamaMes
 func normalizeVisionAnswer(answer string) string {
 	answer = strings.TrimSpace(strings.ReplaceAll(answer, "\u00a0", " "))
 	answer = strings.Trim(answer, ". ")
+	if isEmptyVisionAnswer(answer) {
+		return ""
+	}
 	switch strings.ToLower(answer) {
 	case "monkey", "a monkey":
 		return "Det ser ut som en apa."
@@ -1104,6 +1107,17 @@ func normalizeVisionAnswer(answer string) string {
 		return ""
 	}
 	return answer
+}
+
+func isEmptyVisionAnswer(answer string) bool {
+	normalized := strings.ToLower(answer)
+	normalized = strings.Trim(normalized, " !?.:-_#*\"'")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	switch normalized {
+	case "", "no animal", "no animals", "not an animal", "no animal shown", "there is no animal":
+		return true
+	}
+	return false
 }
 
 func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user string, req imageRequest) (imageResponse, error) {
@@ -2205,7 +2219,7 @@ func requestMessages(req chatRequest) []ollamaMessage {
 
 func systemPromptForMessages(base string, messages []ollamaMessage) string {
 	if messagesHaveImages(messages) {
-		return base + " Nar anvandaren visar en bild, beskriv och resonera om bilden pa anvandarens sprak. Anvand svenska bildord som apa, nasapa och trad nar de passar, men hitta inte pa saker du inte ser."
+		return base + " Nar anvandaren visar en bild, beskriv och resonera om bilden pa anvandarens sprak. Beskriv huvudmotiv, miljo, synliga objekt, text/markeringar och relevant osakerhet. Hitta inte pa saker du inte ser."
 	}
 	return base
 }
@@ -2248,7 +2262,7 @@ func messagesForSelectedModel(settings userSettings, model string, messages []ol
 		}
 		out = append(out, ollamaMessage{
 			Role:    message.Role,
-			Content: "Svara pa svenska. Var kort och konkret. Om du inte kan artbestamma exakt, sag vad du ser och att du ar osaker. Fraga: " + content,
+			Content: "Svara pa svenska. Var kort och konkret. Beskriv vad bilden visar, inklusive huvudmotiv, miljo, synliga objekt och eventuell text eller markering. Om du ar osaker, sag vad som verkar troligt. Fraga: " + content,
 			Images:  message.Images,
 		})
 	}
