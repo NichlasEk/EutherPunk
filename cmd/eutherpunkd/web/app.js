@@ -451,7 +451,7 @@ async function generateImage(prompt, displayText = "") {
         context: modelMessages(conversationMessages.slice(-12)),
       }),
     });
-    let payload = await response.json();
+    let payload = await readJSONResponse(response);
     if (!response.ok) {
       throw new Error(payload.error || response.statusText);
     }
@@ -499,7 +499,17 @@ async function waitForImageJob(jobId, assistantNode) {
       }
       throw error;
     }
-    const job = await response.json();
+    let job;
+    try {
+      job = await readJSONResponse(response);
+    } catch (error) {
+      transientFailures += 1;
+      if (transientFailures < 10) {
+        continue;
+      }
+      throw error;
+    }
+    transientFailures = 0;
     if (!response.ok) {
       throw new Error(job.error || response.statusText);
     }
@@ -517,6 +527,19 @@ async function waitForImageJob(jobId, assistantNode) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readJSONResponse(response) {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(response.ok ? "Tomt svar från servern" : response.statusText);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 180);
+    throw new Error(`Servern svarade inte med JSON: ${preview || error.message}`);
+  }
 }
 
 function trimHistory() {

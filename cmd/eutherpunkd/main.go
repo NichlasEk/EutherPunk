@@ -730,7 +730,7 @@ func handleImageJobGet() http.HandlerFunc {
 		}
 		job, ok := getImageJob(id)
 		if !ok {
-			http.NotFound(w, r)
+			writeError(w, http.StatusNotFound, errors.New("image job not found"))
 			return
 		}
 		writeJSON(w, http.StatusOK, job)
