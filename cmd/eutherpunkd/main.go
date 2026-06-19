@@ -175,12 +175,14 @@ type imageRequest struct {
 }
 
 type userSettings struct {
-	ChatModel    string   `json:"chat_model"`
-	VisionModel  string   `json:"vision_model"`
-	ImageModel   string   `json:"image_model"`
-	ImageLora    string   `json:"image_lora"`
-	VoiceBackend string   `json:"voice_backend"`
-	Loras        []string `json:"loras,omitempty"`
+	ChatModel          string   `json:"chat_model"`
+	VisionModel        string   `json:"vision_model"`
+	ImageModel         string   `json:"image_model"`
+	ImageLora          string   `json:"image_lora"`
+	VoiceBackend       string   `json:"voice_backend"`
+	TTSEnabled         bool     `json:"tts_enabled"`
+	ServerVoiceEnabled bool     `json:"server_voice_enabled"`
+	Loras              []string `json:"loras,omitempty"`
 }
 
 type imageResponse struct {
@@ -950,6 +952,9 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	if timeout <= 0 {
 		timeout = 180 * time.Second
 	}
+	if normalizeImageModel(req.ImageModel) == "sensenova-u1-8b" && timeout < 10*time.Minute {
+		timeout = 10 * time.Minute
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -1162,13 +1167,13 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 			"img_cfg":            1.0,
 			"timestep_shift":     3.0,
 			"batch_size":         1,
-			"prefetch_count":     0,
+			"prefetch_count":     1,
 			"interleave_max":     2,
 			"cfg_norm":           "none",
 			"enhance":            false,
 			"think_mode":         false,
 			"do_sample":          true,
-			"max_new_tokens":     1024,
+			"max_new_tokens":     256,
 			"temperature":        0.7,
 			"top_p":              0.9,
 			"top_k":              0,
@@ -1304,11 +1309,13 @@ func defaultSettingsDirectory(image config.ImageConfig) string {
 
 func defaultUserSettings(cfg serverConfig) userSettings {
 	return userSettings{
-		ChatModel:    cfg.model,
-		VisionModel:  cfg.visionModel,
-		ImageModel:   "z-image-turbo",
-		ImageLora:    "none",
-		VoiceBackend: cfg.voice.ModelBackend,
+		ChatModel:          cfg.model,
+		VisionModel:        cfg.visionModel,
+		ImageModel:         "z-image-turbo",
+		ImageLora:          "none",
+		VoiceBackend:       cfg.voice.ModelBackend,
+		TTSEnabled:         false,
+		ServerVoiceEnabled: false,
 	}
 }
 
@@ -1343,6 +1350,10 @@ func readUserSettings(cfg serverConfig, user string) (userSettings, error) {
 			settings.ImageLora = normalizeLora(value)
 		case "voice_backend":
 			settings.VoiceBackend = value
+		case "tts_enabled":
+			settings.TTSEnabled = mustTOMLBool(strings.TrimSpace(raw))
+		case "server_voice_enabled":
+			settings.ServerVoiceEnabled = mustTOMLBool(strings.TrimSpace(raw))
 		}
 	}
 	mergeUserSettings(&settings, userSettings{})
@@ -1363,6 +1374,8 @@ func writeUserSettings(root, user string, settings userSettings) error {
 	writeTOMLString(&b, "image_model", normalizeImageModel(settings.ImageModel))
 	writeTOMLString(&b, "image_lora", normalizeLora(settings.ImageLora))
 	writeTOMLString(&b, "voice_backend", settings.VoiceBackend)
+	writeTOMLBool(&b, "tts_enabled", settings.TTSEnabled)
+	writeTOMLBool(&b, "server_voice_enabled", settings.ServerVoiceEnabled)
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o640); err != nil {
 		return err
 	}
@@ -1385,6 +1398,8 @@ func mergeUserSettings(settings *userSettings, incoming userSettings) {
 	if value := strings.TrimSpace(incoming.VoiceBackend); value != "" {
 		settings.VoiceBackend = value
 	}
+	settings.TTSEnabled = incoming.TTSEnabled
+	settings.ServerVoiceEnabled = incoming.ServerVoiceEnabled
 	if settings.ChatModel == "" {
 		settings.ChatModel = "qwen3-coder:30b"
 	}
@@ -1393,6 +1408,9 @@ func mergeUserSettings(settings *userSettings, incoming userSettings) {
 	}
 	settings.ImageModel = normalizeImageModel(settings.ImageModel)
 	settings.ImageLora = normalizeLora(settings.ImageLora)
+	if settings.ImageModel != "sensenova-u1-8b" {
+		settings.ImageLora = "none"
+	}
 }
 
 func normalizeImageModel(value string) string {
@@ -1473,10 +1491,25 @@ func mustTOMLString(raw string) string {
 	return strings.TrimSpace(value)
 }
 
+func mustTOMLBool(raw string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return value
+}
+
 func writeTOMLString(b *strings.Builder, key, value string) {
 	b.WriteString(key)
 	b.WriteString(" = ")
 	b.WriteString(strconv.Quote(strings.TrimSpace(value)))
+	b.WriteByte('\n')
+}
+
+func writeTOMLBool(b *strings.Builder, key string, value bool) {
+	b.WriteString(key)
+	b.WriteString(" = ")
+	b.WriteString(strconv.FormatBool(value))
 	b.WriteByte('\n')
 }
 

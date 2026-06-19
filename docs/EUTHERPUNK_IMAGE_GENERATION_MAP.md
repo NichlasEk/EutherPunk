@@ -142,6 +142,8 @@ vision_model = "moondream:latest"
 image_model = "z-image-turbo"
 image_lora = "none"
 voice_backend = "grapheneos-matcha-en"
+tts_enabled = false
+server_voice_enabled = false
 ```
 
 Supported future identity headers:

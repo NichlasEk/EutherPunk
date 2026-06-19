@@ -39,6 +39,8 @@ let userSettings = {
   image_model: "z-image-turbo",
   image_lora: "none",
   voice_backend: "grapheneos-matcha-en",
+  tts_enabled: false,
+  server_voice_enabled: false,
 };
 let imageModels = [
   { id: "z-image-turbo", label: "Z-Image Turbo" },
@@ -82,6 +84,9 @@ async function loadSettings() {
   userSettings = { ...userSettings, ...(payload.settings || {}) };
   imageModels = payload.image_models || imageModels;
   imageLoras = userSettings.loras || imageLoras;
+  ttsEnabled = Boolean(userSettings.tts_enabled);
+  serverVoiceEnabled = Boolean(userSettings.server_voice_enabled);
+  renderVoiceToggles();
   renderSettingsForm();
 }
 
@@ -117,7 +122,25 @@ async function saveSettings() {
     image_model: imageModel,
     image_lora: imageModel === "sensenova-u1-8b" ? imageLoraSelect.value : "none",
     voice_backend: voiceBackendInput.value.trim(),
+    tts_enabled: ttsEnabled,
+    server_voice_enabled: serverVoiceEnabled,
   };
+  await saveSettingsPayload(payload);
+}
+
+async function saveRuntimeSettings() {
+  await saveSettingsPayload({
+    chat_model: userSettings.chat_model,
+    vision_model: userSettings.vision_model,
+    image_model: userSettings.image_model,
+    image_lora: userSettings.image_lora,
+    voice_backend: userSettings.voice_backend,
+    tts_enabled: ttsEnabled,
+    server_voice_enabled: serverVoiceEnabled,
+  });
+}
+
+async function saveSettingsPayload(payload) {
   const response = await fetch("/api/eutherpunk/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -129,7 +152,15 @@ async function saveSettings() {
   }
   userSettings = { ...userSettings, ...(body.settings || {}) };
   imageLoras = userSettings.loras || imageLoras;
+  ttsEnabled = Boolean(userSettings.tts_enabled);
+  serverVoiceEnabled = Boolean(userSettings.server_voice_enabled);
+  renderVoiceToggles();
   renderSettingsForm();
+}
+
+function renderVoiceToggles() {
+  voiceToggle.textContent = ttsEnabled ? "TTS pa" : "TTS av";
+  serverVoiceToggle.textContent = serverVoiceEnabled ? "Serverrost pa" : "Serverrost av";
 }
 
 async function openConversation(id) {
@@ -735,17 +766,39 @@ form.addEventListener("drop", async (event) => {
   promptEl.focus();
 });
 
-voiceToggle.addEventListener("click", () => {
+voiceToggle.addEventListener("click", async () => {
+  const previousTTS = ttsEnabled;
+  const previousServerVoice = serverVoiceEnabled;
   ttsEnabled = !ttsEnabled;
-  voiceToggle.textContent = ttsEnabled ? "TTS pa" : "TTS av";
+  if (!ttsEnabled) {
+    serverVoiceEnabled = false;
+  }
+  renderVoiceToggles();
+  try {
+    await saveRuntimeSettings();
+  } catch (error) {
+    ttsEnabled = previousTTS;
+    serverVoiceEnabled = previousServerVoice;
+    renderVoiceToggles();
+    addMessage("assistant", `Fel: ${error.message}`);
+  }
 });
 
-serverVoiceToggle.addEventListener("click", () => {
+serverVoiceToggle.addEventListener("click", async () => {
+  const previousTTS = ttsEnabled;
+  const previousServerVoice = serverVoiceEnabled;
   serverVoiceEnabled = !serverVoiceEnabled;
-  serverVoiceToggle.textContent = serverVoiceEnabled ? "Serverrost pa" : "Serverrost av";
   if (serverVoiceEnabled && !ttsEnabled) {
     ttsEnabled = true;
-    voiceToggle.textContent = "TTS pa";
+  }
+  renderVoiceToggles();
+  try {
+    await saveRuntimeSettings();
+  } catch (error) {
+    ttsEnabled = previousTTS;
+    serverVoiceEnabled = previousServerVoice;
+    renderVoiceToggles();
+    addMessage("assistant", `Fel: ${error.message}`);
   }
 });
 
