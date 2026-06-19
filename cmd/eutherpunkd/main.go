@@ -81,6 +81,7 @@ type promptSettings struct {
 	VisionMetadataUser        string `json:"vision_metadata_user"`
 	VisionAnswerSystem        string `json:"vision_answer_system"`
 	VisionAnswerUserPrefix    string `json:"vision_answer_user_prefix"`
+	ImageToolSystemSuffix     string `json:"image_tool_system_suffix"`
 	ImageContextRewriteSystem string `json:"image_context_rewrite_system"`
 	ImageContextRewriteUser   string `json:"image_context_rewrite_user"`
 	HiddenImageMemoryTemplate string `json:"hidden_image_memory_template"`
@@ -648,6 +649,9 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		if system == "" {
 			system = systemPromptForMessages(prompts, messages)
 		}
+		if !visionRequest {
+			system = systemPromptWithImageTool(system, prompts)
+		}
 
 		var answer string
 		if visionRequest {
@@ -693,6 +697,9 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 		system := req.System
 		if system == "" {
 			system = systemPromptForMessages(prompts, messages)
+		}
+		if !visionRequest {
+			system = systemPromptWithImageTool(system, prompts)
 		}
 
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -1672,6 +1679,7 @@ func defaultPromptSettings() promptSettings {
 		VisionMetadataUser:        "Skapa en riktigt detaljerad dold bildmetadata for bilden. Var konkret. Om bilden visar ett djur, ange trolig art om mojligt och namna osakerhet. Skriv pa svenska.",
 		VisionAnswerSystem:        "Du skriver om bildtolkningar till kort, naturlig svenska. Behall sakuppgifter. Lagg inte till nya detaljer.",
 		VisionAnswerUserPrefix:    "Skriv detta pa svenska, kort och konkret: ",
+		ImageToolSystemSuffix:     "Om anvandaren vill skapa, generera, rita, kombinera eller variera en bild och du har tillracklig kontext, skriv en kort vanlig bekraftelse och lagg sedan en egen sista rad exakt i formatet: EUTHERPUNK_IMAGE_PROMPT: <en tydlig engelsk bildprompt>. Anvand sparad intern bildmetadata nar anvandaren refererar till tidigare bilder. Skriv aldrig denna rad for vanliga fragor.",
 		ImageContextRewriteSystem: "You convert a chat conversation into one concise English prompt for an image generator. Use the latest user request as the instruction, include relevant visual context from earlier messages or images, and return only the final image prompt with no markdown or explanations.",
 		ImageContextRewriteUser:   "Final image request: {{prompt}}\nWrite the image generation prompt.",
 		HiddenImageMemoryTemplate: "Intern bildmetadata {{index}}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: {{description}}",
@@ -1693,7 +1701,7 @@ func readPromptSettings(path string) (promptSettings, string, error) {
 	if err != nil {
 		return defaults, raw, err
 	}
-	return prompts, raw, nil
+	return prompts, formatPromptSettings(prompts), nil
 }
 
 func parsePromptSettings(raw string) (promptSettings, error) {
@@ -1738,6 +1746,8 @@ func parsePromptSettings(raw string) (promptSettings, error) {
 			prompts.VisionAnswerSystem = parsed
 		case "vision_answer_user_prefix":
 			prompts.VisionAnswerUserPrefix = parsed
+		case "image_tool_system_suffix":
+			prompts.ImageToolSystemSuffix = parsed
 		case "image_context_rewrite_system":
 			prompts.ImageContextRewriteSystem = parsed
 		case "image_context_rewrite_user":
@@ -1762,6 +1772,7 @@ func formatPromptSettings(prompts promptSettings) string {
 	writePromptString(&b, "vision_metadata_user", prompts.VisionMetadataUser)
 	writePromptString(&b, "vision_answer_system", prompts.VisionAnswerSystem)
 	writePromptString(&b, "vision_answer_user_prefix", prompts.VisionAnswerUserPrefix)
+	writePromptString(&b, "image_tool_system_suffix", prompts.ImageToolSystemSuffix)
 	writePromptString(&b, "image_context_rewrite_system", prompts.ImageContextRewriteSystem)
 	writePromptString(&b, "image_context_rewrite_user", prompts.ImageContextRewriteUser)
 	writePromptString(&b, "hidden_image_memory_template", prompts.HiddenImageMemoryTemplate)
@@ -2474,6 +2485,14 @@ func systemPromptForMessages(prompts promptSettings, messages []ollamaMessage) s
 		return base + " " + prompts.VisionSystemSuffix
 	}
 	return base
+}
+
+func systemPromptWithImageTool(base string, prompts promptSettings) string {
+	suffix := strings.TrimSpace(prompts.ImageToolSystemSuffix)
+	if suffix == "" {
+		return base
+	}
+	return strings.TrimSpace(base) + " " + suffix
 }
 
 func chatModel(settings userSettings, messages []ollamaMessage) string {

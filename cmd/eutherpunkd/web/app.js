@@ -472,6 +472,11 @@ async function sendPrompt(prompt, images = []) {
     throw error;
   }
 
+  const imageTool = extractImageToolDirective(fullText);
+  if (imageTool) {
+    fullText = imageTool.visible || "Jag skickar vidare en bildprompt till bildgeneratorn.";
+    assistantNode.textContent = fullText;
+  }
   const storedMetadata = imageMetadata || fullText;
   if (storedMetadata && userMessage.images.length > 0) {
     for (const image of userMessage.images) {
@@ -482,13 +487,21 @@ async function sendPrompt(prompt, images = []) {
   trimHistory();
   await saveActiveConversation();
   await speak(fullText);
+  if (imageTool) {
+    await generateImage(imageTool.prompt, userMessage.content, { addUserMessage: false });
+  }
 }
 
-async function generateImage(prompt, displayText = "") {
-  const userMessage = { role: "user", content: displayText || `/bild ${prompt}`, images: [] };
-  addMessage("user", userMessage.content);
+async function generateImage(prompt, displayText = "", options = {}) {
+  const shouldAddUserMessage = options.addUserMessage !== false;
+  const userMessage = shouldAddUserMessage ? { role: "user", content: displayText || `/bild ${prompt}`, images: [] } : null;
+  if (userMessage) {
+    addMessage("user", userMessage.content);
+  }
   const assistantNode = addMessage("assistant", "Genererar bild...");
-  conversationMessages.push(userMessage);
+  if (userMessage) {
+    conversationMessages.push(userMessage);
+  }
   trimHistory();
   await saveActiveConversation();
 
@@ -529,8 +542,10 @@ async function generateImage(prompt, displayText = "") {
     trimHistory();
     await saveActiveConversation();
   } catch (error) {
-    conversationMessages = conversationMessages.filter((message) => message !== userMessage);
-    await saveActiveConversation().catch(() => {});
+    if (userMessage) {
+      conversationMessages = conversationMessages.filter((message) => message !== userMessage);
+      await saveActiveConversation().catch(() => {});
+    }
     throw error;
   }
 }
@@ -635,6 +650,27 @@ function formatHiddenImageMemory(index, description) {
   return (promptSettings.hidden_image_memory_template || "")
     .replaceAll("{{index}}", String(index))
     .replaceAll("{{description}}", description);
+}
+
+function extractImageToolDirective(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  let prompt = "";
+  const visible = [];
+  for (const line of lines) {
+    const match = line.match(/^\s*EUTHERPUNK_IMAGE_PROMPT\s*:\s*(.+?)\s*$/i);
+    if (match) {
+      prompt = match[1].trim();
+      continue;
+    }
+    visible.push(line);
+  }
+  if (!prompt) {
+    return null;
+  }
+  return {
+    prompt,
+    visible: visible.join("\n").trim(),
+  };
 }
 
 function storedImageMetadataText() {
@@ -794,6 +830,9 @@ form.addEventListener("submit", async (event) => {
       await showStoredImageMetadata(prompt);
     } else if (images.length === 0 && imageRequest) {
       await generateImage(imageRequest.prompt, imageRequest.displayText);
+    } else if (images.length > 0 && imageRequest) {
+      await sendPrompt(prompt, images);
+      await generateImage(imageRequest.prompt, prompt, { addUserMessage: false });
     } else {
       await sendPrompt(prompt, images);
     }
