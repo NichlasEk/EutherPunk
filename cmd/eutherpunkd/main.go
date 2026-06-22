@@ -816,7 +816,20 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 			return "", true, err
 		}
 		return eutherNetTextField(body, "changes", "EutherNet ser inga changes i senaste snapshoten."), true, nil
+	case "backup", "backup-manifest":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/backup-manifest")
+		if err != nil {
+			return "", true, err
+		}
+		return eutherNetTOMLField(body, "manifest_toml", "EutherNet har inget backup-manifest i senaste snapshoten."), true, nil
 	case "restore":
+		if len(args) >= 3 && (strings.EqualFold(args[2], "drill") || strings.EqualFold(args[2], "övning") || strings.EqualFold(args[2], "ovning")) {
+			body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/restore-drill")
+			if err != nil {
+				return "", true, err
+			}
+			return eutherNetTOMLField(body, "drill_toml", "EutherNet har ingen restore drill i senaste snapshoten."), true, nil
+		}
 		if len(args) >= 3 && (strings.EqualFold(args[2], "plan") || strings.EqualFold(args[2], "restore-plan")) {
 			body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/restore-plan")
 			if err != nil {
@@ -836,6 +849,15 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 			return eutherNetRestoreBundle(body), true, nil
 		}
 		return eutherNetHelp(), true, nil
+	case "map", "karta":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/map")
+		if err != nil {
+			return "", true, err
+		}
+		if len(args) >= 3 && (strings.EqualFold(args[2], "image") || strings.EqualFold(args[2], "bild") || strings.EqualFold(args[2], "prompt")) {
+			return eutherNetTextField(body, "image_prompt", "EutherNet har ingen bildprompt for serverkartan."), true, nil
+		}
+		return eutherNetTOMLField(body, "map_toml", "EutherNet har ingen serverkarta i senaste snapshoten."), true, nil
 	case "report", "rapport":
 		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/report")
 		if err != nil {
@@ -889,6 +911,15 @@ func naturalEutherNetRoute(message string) (string, bool) {
 		return "", false
 	}
 	switch {
+	case strings.Contains(lower, "serverkarta") || strings.Contains(lower, "server karta") || strings.Contains(lower, "karta") || strings.Contains(lower, "map"):
+		if strings.Contains(lower, "bild") || strings.Contains(lower, "image") || strings.Contains(lower, "prompt") || strings.Contains(lower, "cyberpunk") {
+			return "/server map image", true
+		}
+		return "/server map", true
+	case strings.Contains(lower, "restore drill") || strings.Contains(lower, "restore-drill") || strings.Contains(lower, "restoreövning") || strings.Contains(lower, "restore ovning"):
+		return "/server restore drill", true
+	case strings.Contains(lower, "backup") && !(strings.Contains(lower, "restore") || strings.Contains(lower, "återställ") || strings.Contains(lower, "aterstall") || strings.Contains(lower, "bootstrap")):
+		return "/server backup", true
 	case strings.Contains(lower, "backup") && (strings.Contains(lower, "restore") || strings.Contains(lower, "återställ") || strings.Contains(lower, "aterstall") || strings.Contains(lower, "bootstrap")):
 		return "/server restore bundle backup", true
 	case strings.Contains(lower, "bundle") || strings.Contains(lower, "bootstrap") || strings.Contains(lower, "install script") || strings.Contains(lower, "installationsskript"):
@@ -960,9 +991,13 @@ func eutherNetHelp() string {
 		"- `/server repos`",
 		"- `/server summary`",
 		"- `/server changes`",
+		"- `/server backup`",
 		"- `/server restore plan`",
+		"- `/server restore drill`",
 		"- `/server restore bundle`",
 		"- `/server restore bundle backup`",
+		"- `/server map`",
+		"- `/server map image`",
 		"- `/server full report`",
 		"- `/server commands`",
 		"- `/server refresh`",
@@ -1145,6 +1180,14 @@ func eutherNetTextField(body []byte, field string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func eutherNetTOMLField(body []byte, field string, fallback string) string {
+	value := eutherNetTextField(body, field, "")
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return "```toml\n" + strings.TrimSpace(value) + "\n```"
 }
 
 func summarizeEutherNetRun(body []byte) string {
