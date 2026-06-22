@@ -59,6 +59,7 @@ type serverConfig struct {
 	promptsPath    string
 	downloadsDir   string
 	eutherOxideURL string
+	eutherNet      config.EutherNetConfig
 	voice          config.VoiceConfig
 	image          config.ImageConfig
 	users          map[string]config.UserConfig
@@ -304,6 +305,7 @@ func main() {
 		promptsPath:    envOr("EUTHERPUNK_PROMPTS_PATH", defaultPromptsPath(envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)))),
 		downloadsDir:   appConfig.Downloads.Directory,
 		eutherOxideURL: appConfig.EutherOxide.UsersURL,
+		eutherNet:      appConfig.EutherNet,
 		voice:          appConfig.Voice,
 		image:          appConfig.Image,
 		users:          appConfig.Users,
@@ -350,6 +352,10 @@ func handleStatus(cfg serverConfig) http.HandlerFunc {
 			"chat_dir":     cfg.chatDir,
 			"settings_dir": cfg.settingsDir,
 			"downloads":    cfg.downloadsDir,
+			"euthernet": map[string]any{
+				"enabled": cfg.eutherNet.Enabled,
+				"url":     cfg.eutherNet.URL,
+			},
 			"voice": map[string]any{
 				"eutherlink_url": cfg.voice.EutherLinkURL,
 				"model_backend":  cfg.voice.ModelBackend,
@@ -631,6 +637,14 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("message is required"))
 			return
 		}
+		if answer, handled, err := handleEutherNetSlash(r.Context(), cfg, lastUserMessage(messages)); handled {
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, chatResponse{Model: "euthernet", Message: answer})
+			return
+		}
 
 		settings, err := readUserSettings(cfg, requestUser(r, cfg))
 		if err != nil {
@@ -680,6 +694,20 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("message is required"))
 			return
 		}
+		if answer, handled, err := handleEutherNetSlash(r.Context(), cfg, lastUserMessage(messages)); handled {
+			w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			encoder := json.NewEncoder(w)
+			if err != nil {
+				_ = encoder.Encode(streamChunk{Model: "euthernet", Error: err.Error(), Done: true})
+				return
+			}
+			if answer != "" {
+				_ = encoder.Encode(streamChunk{Model: "euthernet", Delta: answer})
+			}
+			_ = encoder.Encode(streamChunk{Model: "euthernet", Done: true})
+			return
+		}
 
 		settings, err := readUserSettings(cfg, requestUser(r, cfg))
 		if err != nil {
@@ -724,6 +752,268 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(streamChunk{Model: model, Error: err.Error(), Done: true})
 		}
 	}
+}
+
+func lastUserMessage(messages []ollamaMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return strings.TrimSpace(messages[i].Content)
+		}
+	}
+	return ""
+}
+
+func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string) (string, bool, error) {
+	message = strings.TrimSpace(message)
+	if !strings.HasPrefix(strings.ToLower(message), "/server") {
+		return "", false, nil
+	}
+	if !cfg.eutherNet.Enabled {
+		return "", true, errors.New("EutherNet ar inte aktiverat i EutherPunk config")
+	}
+	baseURL := strings.TrimRight(cfg.eutherNet.URL, "/")
+	if baseURL == "" {
+		return "", true, errors.New("EutherNet URL saknas i EutherPunk config")
+	}
+
+	args := strings.Fields(message)
+	if len(args) == 1 {
+		return eutherNetHelp(), true, nil
+	}
+	command := strings.ToLower(args[1])
+	switch command {
+	case "status", "health":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/status")
+		if err != nil {
+			return "", true, err
+		}
+		return summarizeEutherNetStatus(body), true, nil
+	case "repos", "repo", "git":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/repos")
+		if err != nil {
+			return "", true, err
+		}
+		return summarizeEutherNetRepos(body), true, nil
+	case "commands", "kommandon":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/commands")
+		if err != nil {
+			return "", true, err
+		}
+		return summarizeEutherNetCommands(body), true, nil
+	case "refresh", "inventory", "scan":
+		body, err := eutherNetPOST(ctx, baseURL+"/api/euthernet/refresh", map[string]string{})
+		if err != nil {
+			return "", true, err
+		}
+		return summarizeEutherNetRefresh(body), true, nil
+	case "ask", "fraga", "fråga":
+		question := strings.TrimSpace(strings.TrimPrefix(message, args[0]+" "+args[1]))
+		if question == "" {
+			return "Skriv en fraga efter `/server ask`, till exempel `/server ask vilka repos ar dirty?`.", true, nil
+		}
+		body, err := eutherNetPOST(ctx, baseURL+"/api/euthernet/ask", map[string]string{"question": question})
+		if err != nil {
+			return "", true, err
+		}
+		return eutherNetAnswer(body), true, nil
+	case "run", "kor", "kör":
+		if len(args) < 3 {
+			return "Skriv ett allowlistat kommando efter `/server run`, till exempel `/server run disk`.", true, nil
+		}
+		body, err := eutherNetPOST(ctx, baseURL+"/api/euthernet/run", map[string]string{"name": args[2]})
+		if err != nil {
+			return "", true, err
+		}
+		return summarizeEutherNetRun(body), true, nil
+	default:
+		return eutherNetHelp(), true, nil
+	}
+}
+
+func eutherNetGET(ctx context.Context, endpoint string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 70*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	return eutherNetDo(req)
+}
+
+func eutherNetPOST(ctx context.Context, endpoint string, payload any) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return eutherNetDo(req)
+}
+
+func eutherNetDo(req *http.Request) ([]byte, error) {
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("EutherNet svarade %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return body, nil
+}
+
+func eutherNetHelp() string {
+	return strings.Join([]string{
+		"EutherNet-kommandon:",
+		"- `/server status`",
+		"- `/server repos`",
+		"- `/server commands`",
+		"- `/server refresh`",
+		"- `/server ask <fraga>`",
+		"- `/server run <allowlist-namn>`",
+	}, "\n")
+}
+
+func summarizeEutherNetStatus(body []byte) string {
+	var payload struct {
+		OK           bool              `json:"ok"`
+		CollectedAt  string            `json:"collected_at"`
+		SSHPreflight bool              `json:"ssh_preflight"`
+		Server       map[string]string `json:"server"`
+		Collectors   map[string]any    `json:"collectors"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	repos := "okand repoantal"
+	if collector, ok := payload.Collectors["git_repositories"].(map[string]any); ok {
+		if count, ok := collector["repository_count"]; ok {
+			repos = fmt.Sprintf("%v repos", count)
+		}
+	}
+	return fmt.Sprintf(
+		"EutherNet status: %s samlades %s. SSH=%v, %s.",
+		payload.Server["name"],
+		payload.CollectedAt,
+		payload.SSHPreflight,
+		repos,
+	)
+}
+
+func summarizeEutherNetRepos(body []byte) string {
+	var payload struct {
+		Repos []struct {
+			Path       string `json:"path"`
+			Branch     string `json:"branch"`
+			Head       string `json:"head"`
+			DirtyLines string `json:"dirty_lines"`
+		} `json:"repos"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	if len(payload.Repos) == 0 {
+		return "EutherNet ser inga repos i senaste snapshoten."
+	}
+	dirty := []string{}
+	for _, repo := range payload.Repos {
+		if repo.DirtyLines != "" && repo.DirtyLines != "0" {
+			branch := repo.Branch
+			if branch == "" {
+				branch = "detached/okand"
+			}
+			dirty = append(dirty, fmt.Sprintf("- `%s` [%s %s], %s statusrader", repo.Path, branch, repo.Head, repo.DirtyLines))
+		}
+	}
+	if len(dirty) == 0 {
+		return fmt.Sprintf("EutherNet ser %d repos. Inga dirty repos syns.", len(payload.Repos))
+	}
+	return fmt.Sprintf("EutherNet ser %d repos. Dirty repos:\n%s", len(payload.Repos), strings.Join(dirty, "\n"))
+}
+
+func summarizeEutherNetCommands(body []byte) string {
+	var payload struct {
+		Commands []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"commands"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	lines := []string{"Tillatna EutherNet-kommandon:"}
+	for _, command := range payload.Commands {
+		lines = append(lines, fmt.Sprintf("- `%s`: %s", command.Name, command.Description))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func summarizeEutherNetRefresh(body []byte) string {
+	var payload struct {
+		OK           bool   `json:"ok"`
+		CollectedAt  string `json:"collected_at"`
+		SSHPreflight bool   `json:"ssh_preflight"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	if !payload.OK {
+		return fmt.Sprintf("Inventory uppdaterades men SSH preflight misslyckades. Tid: %s", payload.CollectedAt)
+	}
+	return fmt.Sprintf("Inventory uppdaterad %s. SSH preflight ok.", payload.CollectedAt)
+}
+
+func eutherNetAnswer(body []byte) string {
+	var payload struct {
+		Answer string `json:"answer"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	if payload.Source != "" {
+		return fmt.Sprintf("%s\n\nKalla: EutherNet %s.", payload.Answer, payload.Source)
+	}
+	return payload.Answer
+}
+
+func summarizeEutherNetRun(body []byte) string {
+	var payload struct {
+		OK          bool   `json:"ok"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Stdout      string `json:"stdout"`
+		Stderr      string `json:"stderr"`
+		Error       string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	if !payload.OK {
+		if payload.Error != "" {
+			return "EutherNet kunde inte kora kommandot: " + payload.Error
+		}
+		if payload.Stderr != "" {
+			return "EutherNet kunde inte kora kommandot:\n```text\n" + payload.Stderr + "\n```"
+		}
+	}
+	output := strings.TrimSpace(payload.Stdout)
+	if output == "" {
+		output = strings.TrimSpace(payload.Stderr)
+	}
+	if output == "" {
+		output = "(tom output)"
+	}
+	return fmt.Sprintf("EutherNet `%s`:\n```text\n%s\n```", payload.Name, output)
 }
 
 func handleCLIDownload(cfg serverConfig) http.HandlerFunc {

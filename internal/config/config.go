@@ -18,6 +18,7 @@ type Config struct {
 	Voice       VoiceConfig           `json:"voice"`
 	Image       ImageConfig           `json:"image"`
 	EutherOxide EutherOxideConfig     `json:"eutheroxide"`
+	EutherNet   EutherNetConfig       `json:"euthernet"`
 	Tools       ToolsConfig           `json:"tools"`
 	Users       map[string]UserConfig `json:"users"`
 	Path        string                `json:"path"`
@@ -63,6 +64,11 @@ type EutherOxideConfig struct {
 	BaseURL      string `json:"base_url"`
 	UsersURL     string `json:"users_url"`
 	AuthRequired bool   `json:"auth_required"`
+}
+
+type EutherNetConfig struct {
+	Enabled bool   `json:"enabled"`
+	URL     string `json:"url"`
 }
 
 type ToolsConfig struct {
@@ -118,6 +124,10 @@ func Default() Config {
 			BaseURL:      "http://192.168.32.186:8080",
 			UsersURL:     "http://192.168.32.186:8080/api/app/users",
 			AuthRequired: true,
+		},
+		EutherNet: EutherNetConfig{
+			Enabled: false,
+			URL:     "http://127.0.0.1:8791",
 		},
 		Tools: ToolsConfig{
 			AllowRead:               true,
@@ -256,6 +266,15 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.EutherOxide.UsersURL = mustString(raw)
 		case "auth_required":
 			cfg.EutherOxide.AuthRequired = mustBool(raw)
+		default:
+			return unknown(section, key)
+		}
+	case "euthernet":
+		switch key {
+		case "enabled":
+			cfg.EutherNet.Enabled = mustBool(raw)
+		case "url":
+			cfg.EutherNet.URL = mustString(raw)
 		default:
 			return unknown(section, key)
 		}

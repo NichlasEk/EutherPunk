@@ -27,6 +27,10 @@ base_url = "http://192.168.32.186:8080"
 users_url = "http://192.168.32.186:8080/api/app/users"
 auth_required = true
 
+[euthernet]
+enabled = true
+url = "http://127.0.0.1:8791"
+
 [tools]
 allow_read = true
 allow_write = false
