@@ -1103,6 +1103,9 @@ func eutherNetRestoreBundle(body []byte) string {
 			Repositories []struct {
 				Path string `json:"path"`
 			} `json:"repositories"`
+			Services []struct {
+				Name string `json:"name"`
+			} `json:"services"`
 		} `json:"manifest"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -1116,6 +1119,7 @@ func eutherNetRestoreBundle(body []byte) string {
 		fmt.Sprintf("Baspaket: `%s`.", strings.Join(payload.Manifest.BasePackages, ", ")),
 		fmt.Sprintf("Observerade paket i snapshot: `%d`.", len(payload.Manifest.ObservedPackages)),
 		fmt.Sprintf("Repos i scope: `%d`.", len(payload.Manifest.Repositories)),
+		fmt.Sprintf("Serviceplaner: `%d`.", len(payload.Manifest.Services)),
 		"",
 		payload.Runbook,
 		"## Bootstrap Script",
