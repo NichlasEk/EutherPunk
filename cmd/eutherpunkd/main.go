@@ -781,6 +781,13 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 		return eutherNetHelp(), true, nil
 	}
 	command := strings.ToLower(args[1])
+	if command == "full" && len(args) >= 3 && strings.EqualFold(args[2], "report") {
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/report")
+		if err != nil {
+			return "", true, err
+		}
+		return eutherNetReport(body), true, nil
+	}
 	switch command {
 	case "status", "health":
 		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/status")
@@ -794,6 +801,12 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 			return "", true, err
 		}
 		return summarizeEutherNetRepos(body), true, nil
+	case "report", "rapport":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/report")
+		if err != nil {
+			return "", true, err
+		}
+		return eutherNetReport(body), true, nil
 	case "commands", "kommandon":
 		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/commands")
 		if err != nil {
@@ -876,6 +889,7 @@ func eutherNetHelp() string {
 		"EutherNet-kommandon:",
 		"- `/server status`",
 		"- `/server repos`",
+		"- `/server full report`",
 		"- `/server commands`",
 		"- `/server refresh`",
 		"- `/server ask <fraga>`",
@@ -984,6 +998,19 @@ func eutherNetAnswer(body []byte) string {
 		return fmt.Sprintf("%s\n\nKalla: EutherNet %s.", payload.Answer, payload.Source)
 	}
 	return payload.Answer
+}
+
+func eutherNetReport(body []byte) string {
+	var payload struct {
+		Report string `json:"report"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	if strings.TrimSpace(payload.Report) == "" {
+		return "EutherNet har ingen full report i senaste snapshoten."
+	}
+	return payload.Report
 }
 
 func summarizeEutherNetRun(body []byte) string {
