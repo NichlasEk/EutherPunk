@@ -1226,8 +1226,6 @@ func generateEutherNetMapImage(ctx context.Context, cfg serverConfig, body []byt
 		Width:          1024,
 		Height:         1024,
 		Steps:          8,
-		ImageModel:     "sensenova-u1-8b-fast",
-		Lora:           "none",
 	}
 	user := "server-map"
 	job := newImageJob()
