@@ -765,6 +765,9 @@ func lastUserMessage(messages []ollamaMessage) string {
 
 func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string) (string, bool, error) {
 	message = strings.TrimSpace(message)
+	if routed, ok := naturalEutherNetRoute(message); ok {
+		message = routed
+	}
 	if !strings.HasPrefix(strings.ToLower(message), "/server") {
 		return "", false, nil
 	}
@@ -801,6 +804,27 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 			return "", true, err
 		}
 		return summarizeEutherNetRepos(body), true, nil
+	case "summary", "sammanfattning":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/summary")
+		if err != nil {
+			return "", true, err
+		}
+		return eutherNetTextField(body, "summary", "EutherNet har ingen summary i senaste snapshoten."), true, nil
+	case "changes", "change", "drift", "andringar", "ändringar":
+		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/changes")
+		if err != nil {
+			return "", true, err
+		}
+		return eutherNetTextField(body, "changes", "EutherNet ser inga changes i senaste snapshoten."), true, nil
+	case "restore":
+		if len(args) >= 3 && (strings.EqualFold(args[2], "plan") || strings.EqualFold(args[2], "restore-plan")) {
+			body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/restore-plan")
+			if err != nil {
+				return "", true, err
+			}
+			return eutherNetTextField(body, "plan", "EutherNet har ingen restore plan i senaste snapshoten."), true, nil
+		}
+		return eutherNetHelp(), true, nil
 	case "report", "rapport":
 		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/report")
 		if err != nil {
@@ -840,6 +864,36 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 		return summarizeEutherNetRun(body), true, nil
 	default:
 		return eutherNetHelp(), true, nil
+	}
+}
+
+func naturalEutherNetRoute(message string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" || strings.HasPrefix(lower, "/") {
+		return "", false
+	}
+	hasServerContext := strings.Contains(lower, "server") || strings.Contains(lower, "euthernet")
+	hasRepoContext := strings.Contains(lower, "repo") || strings.Contains(lower, "git")
+	if !hasServerContext && !hasRepoContext {
+		return "", false
+	}
+	switch {
+	case strings.Contains(lower, "restore") || strings.Contains(lower, "återställ") || strings.Contains(lower, "aterstall"):
+		return "/server restore plan", true
+	case strings.Contains(lower, "full report") || strings.Contains(lower, "serverrapport") || strings.Contains(lower, "rapport"):
+		return "/server full report", true
+	case strings.Contains(lower, "summary") || strings.Contains(lower, "sammanfatt"):
+		return "/server summary", true
+	case strings.Contains(lower, "changes") || strings.Contains(lower, "drift") || strings.Contains(lower, "ändring") || strings.Contains(lower, "andring"):
+		return "/server changes", true
+	case strings.Contains(lower, "repo") || strings.Contains(lower, "git") || strings.Contains(lower, "dirty"):
+		return "/server repos", true
+	case strings.Contains(lower, "kommando") || strings.Contains(lower, "commands"):
+		return "/server commands", true
+	case strings.Contains(lower, "hur mår") || strings.Contains(lower, "hur mar") || strings.Contains(lower, "health") || strings.Contains(lower, "status"):
+		return "/server summary", true
+	default:
+		return "", false
 	}
 }
 
@@ -889,6 +943,9 @@ func eutherNetHelp() string {
 		"EutherNet-kommandon:",
 		"- `/server status`",
 		"- `/server repos`",
+		"- `/server summary`",
+		"- `/server changes`",
+		"- `/server restore plan`",
 		"- `/server full report`",
 		"- `/server commands`",
 		"- `/server refresh`",
@@ -1011,6 +1068,18 @@ func eutherNetReport(body []byte) string {
 		return "EutherNet har ingen full report i senaste snapshoten."
 	}
 	return payload.Report
+}
+
+func eutherNetTextField(body []byte, field string, fallback string) string {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	value, ok := payload[field].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func summarizeEutherNetRun(body []byte) string {
