@@ -1,3 +1,5 @@
 dist/
 *.log
 var/images/
+.gocache/
+.gotmp/

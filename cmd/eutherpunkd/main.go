@@ -855,7 +855,7 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 			return "", true, err
 		}
 		if len(args) >= 3 && (strings.EqualFold(args[2], "image") || strings.EqualFold(args[2], "bild") || strings.EqualFold(args[2], "prompt")) {
-			return eutherNetTextField(body, "image_prompt", "EutherNet har ingen bildprompt for serverkartan."), true, nil
+			return generateEutherNetMapImage(ctx, cfg, body), true, nil
 		}
 		return eutherNetTOMLField(body, "map_toml", "EutherNet har ingen serverkarta i senaste snapshoten."), true, nil
 	case "report", "rapport":
@@ -905,14 +905,36 @@ func naturalEutherNetRoute(message string) (string, bool) {
 	if lower == "" || strings.HasPrefix(lower, "/") {
 		return "", false
 	}
-	hasServerContext := strings.Contains(lower, "server") || strings.Contains(lower, "euthernet")
+	hasMapIntent := strings.Contains(lower, "serverkarta") ||
+		strings.Contains(lower, "server karta") ||
+		strings.Contains(lower, "eutherverse") ||
+		strings.Contains(lower, "karta") ||
+		strings.Contains(lower, "diagram") ||
+		strings.Contains(lower, "översikt") ||
+		strings.Contains(lower, "oversikt") ||
+		strings.Contains(lower, "visualisera") ||
+		strings.Contains(lower, "visuell") ||
+		strings.Contains(lower, "rita") ||
+		strings.Contains(lower, "map")
+	wantsImage := strings.Contains(lower, "bild") ||
+		strings.Contains(lower, "image") ||
+		strings.Contains(lower, "rita") ||
+		strings.Contains(lower, "generera") ||
+		strings.Contains(lower, "skapa") ||
+		strings.Contains(lower, "prompt") ||
+		strings.Contains(lower, "cyberpunk")
+	hasServerContext := strings.Contains(lower, "server") ||
+		strings.Contains(lower, "euthernet") ||
+		strings.Contains(lower, "eutherverse") ||
+		strings.Contains(lower, "eutheroxide") ||
+		strings.Contains(lower, "eutherpunk")
 	hasRepoContext := strings.Contains(lower, "repo") || strings.Contains(lower, "git")
-	if !hasServerContext && !hasRepoContext {
+	if !hasServerContext && !hasRepoContext && !hasMapIntent {
 		return "", false
 	}
 	switch {
-	case strings.Contains(lower, "serverkarta") || strings.Contains(lower, "server karta") || strings.Contains(lower, "karta") || strings.Contains(lower, "map"):
-		if strings.Contains(lower, "bild") || strings.Contains(lower, "image") || strings.Contains(lower, "prompt") || strings.Contains(lower, "cyberpunk") {
+	case hasMapIntent:
+		if wantsImage {
 			return "/server map image", true
 		}
 		return "/server map", true
@@ -1188,6 +1210,58 @@ func eutherNetTOMLField(body []byte, field string, fallback string) string {
 		return fallback
 	}
 	return "```toml\n" + strings.TrimSpace(value) + "\n```"
+}
+
+func generateEutherNetMapImage(ctx context.Context, cfg serverConfig, body []byte) string {
+	prompt := eutherNetTextField(body, "image_prompt", "")
+	if strings.TrimSpace(prompt) == "" {
+		return "EutherNet har ingen bildprompt for serverkartan."
+	}
+	req := imageRequest{
+		Prompt:         prompt,
+		NegativePrompt: "blurry text, unreadable labels, logo, watermark, low resolution, cluttered layout",
+		Width:          1024,
+		Height:         1024,
+		Steps:          8,
+		ImageModel:     "sensenova-u1-8b-fast",
+		Lora:           "none",
+	}
+	user := "server-map"
+	job := newImageJob()
+	storeImageJob(job)
+	go runImageJob(cfg, user, req, job.ID)
+
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		current, ok := getImageJob(job.ID)
+		if !ok {
+			return fmt.Sprintf("Jag startade kartbilden, men tappade jobstatusen. Jobb-ID: `%s`.", job.ID)
+		}
+		switch current.Status {
+		case "done":
+			if current.Response.URL != "" {
+				return strings.Join([]string{
+					"Genererade EutherVerse-serverkartan.",
+					"",
+					fmt.Sprintf("![EutherVerse serverkarta](%s)", current.Response.URL),
+					"",
+					current.Response.URL,
+				}, "\n")
+			}
+			return fmt.Sprintf("Kartbilden ar klar, men saknar bild-URL. Jobb-ID: `%s`.", job.ID)
+		case "error":
+			if current.Error != "" {
+				return "Bildgenereringen misslyckades: " + current.Error
+			}
+			return "Bildgenereringen misslyckades utan feltext."
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Sprintf("Genererar EutherVerse-serverkartan. Jobb-ID: `%s`. Status: `/api/eutherpunk/images/jobs/%s`.", job.ID, job.ID)
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return fmt.Sprintf("Genererar EutherVerse-serverkartan. Jobb-ID: `%s`. Status: `/api/eutherpunk/images/jobs/%s`.", job.ID, job.ID)
 }
 
 func summarizeEutherNetRun(body []byte) string {
