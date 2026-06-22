@@ -854,7 +854,10 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 		if err != nil {
 			return "", true, err
 		}
-		if len(args) >= 3 && (strings.EqualFold(args[2], "image") || strings.EqualFold(args[2], "bild") || strings.EqualFold(args[2], "prompt")) {
+		if len(args) >= 3 && strings.EqualFold(args[2], "prompt") {
+			return eutherNetTextField(body, "image_prompt", "EutherNet har ingen bildprompt for serverkartan."), true, nil
+		}
+		if len(args) >= 3 && (strings.EqualFold(args[2], "image") || strings.EqualFold(args[2], "bild")) {
 			return generateEutherNetMapImage(ctx, cfg, body), true, nil
 		}
 		return eutherNetTOMLField(body, "map_toml", "EutherNet har ingen serverkarta i senaste snapshoten."), true, nil
@@ -1231,7 +1234,7 @@ func generateEutherNetMapImage(ctx context.Context, cfg serverConfig, body []byt
 	storeImageJob(job)
 	go runImageJob(cfg, user, req, job.ID)
 
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		current, ok := getImageJob(job.ID)
 		if !ok {
@@ -1251,7 +1254,7 @@ func generateEutherNetMapImage(ctx context.Context, cfg serverConfig, body []byt
 			return fmt.Sprintf("Kartbilden ar klar, men saknar bild-URL. Jobb-ID: `%s`.", job.ID)
 		case "error":
 			if current.Error != "" {
-				return "Bildgenereringen misslyckades: " + current.Error
+				return "Jag hittade serverkartan och startade bildgenereringen, men bildmotorn svarade inte klart:\n\n```text\n" + current.Error + "\n```"
 			}
 			return "Bildgenereringen misslyckades utan feltext."
 		}
