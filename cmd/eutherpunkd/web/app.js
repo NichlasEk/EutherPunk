@@ -347,25 +347,80 @@ function renderTitle() {
 function addMessage(role, text = "", images = []) {
   const node = document.createElement("article");
   node.className = `message ${role}`;
-  if (text) {
-    const textNode = document.createElement("div");
-    textNode.textContent = text;
-    node.appendChild(textNode);
-  }
-  if (images.length > 0) {
-    const imageWrap = document.createElement("div");
-    imageWrap.className = "messageImages";
-    for (const image of images) {
-      const img = document.createElement("img");
-      img.src = image.url || image.dataURL;
-      img.alt = image.alt || "Bild";
-      imageWrap.appendChild(img);
-    }
-    node.appendChild(imageWrap);
-  }
+  renderMessageContent(node, text, images);
   messagesEl.appendChild(node);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return node;
+}
+
+function renderMessageContent(node, text = "", images = []) {
+  node.replaceChildren();
+  const markdownImages = extractMarkdownImages(text);
+  const displayText = stripMarkdownImages(text, markdownImages);
+  if (displayText) {
+    const textNode = document.createElement("div");
+    textNode.textContent = displayText;
+    node.appendChild(textNode);
+  }
+  const visibleImages = uniqueMessageImages([...images, ...markdownImages]);
+  if (visibleImages.length > 0) {
+    const imageWrap = document.createElement("div");
+    imageWrap.className = "messageImages";
+    for (const image of visibleImages) {
+      const src = image.url || image.dataURL;
+      if (!src) {
+        continue;
+      }
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = image.alt || "Bild";
+      imageWrap.appendChild(img);
+    }
+    if (imageWrap.childElementCount > 0) {
+      node.appendChild(imageWrap);
+    }
+  }
+}
+
+function uniqueMessageImages(images = []) {
+  const seen = new Set();
+  const out = [];
+  for (const image of images) {
+    const key = image.url || image.dataURL || "";
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(image);
+  }
+  return out;
+}
+
+function extractMarkdownImages(text = "") {
+  const images = [];
+  const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    images.push({ alt: match[1] || "Bild", url: match[2] });
+  }
+  return images;
+}
+
+function stripMarkdownImages(text = "", images = []) {
+  if (images.length === 0) {
+    return text;
+  }
+  let value = text.replace(/!\[[^\]]*\]\([^)\s]+\)/g, "");
+  for (const image of images) {
+    if (!image.url) {
+      continue;
+    }
+    value = value
+      .split("\n")
+      .filter((line) => line.trim() !== image.url)
+      .join("\n");
+  }
+  return value.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 async function speak(text) {
@@ -458,7 +513,7 @@ async function sendPrompt(prompt, images = []) {
         }
         if (chunk.delta) {
           fullText += chunk.delta;
-          assistantNode.textContent = fullText;
+          renderMessageContent(assistantNode, fullText);
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
         if (chunk.image_metadata) {
@@ -475,7 +530,7 @@ async function sendPrompt(prompt, images = []) {
   const imageTool = extractImageToolDirective(fullText);
   if (imageTool) {
     fullText = imageTool.visible || "Jag skickar vidare en bildprompt till bildgeneratorn.";
-    assistantNode.textContent = fullText;
+    renderMessageContent(assistantNode, fullText);
   }
   const storedMetadata = imageMetadata || fullText;
   if (storedMetadata && userMessage.images.length > 0) {
@@ -483,7 +538,7 @@ async function sendPrompt(prompt, images = []) {
       image.description = storedMetadata;
     }
   }
-  conversationMessages.push({ role: "assistant", content: fullText, images: [] });
+  conversationMessages.push({ role: "assistant", content: fullText, images: extractMarkdownImages(fullText) });
   trimHistory();
   await saveActiveConversation();
   await speak(fullText);

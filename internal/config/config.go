@@ -52,12 +52,13 @@ type VoiceConfig struct {
 }
 
 type ImageConfig struct {
-	ComfyUIURL     string `json:"comfyui_url"`
-	Directory      string `json:"directory"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	DefaultWidth   int    `json:"default_width"`
-	DefaultHeight  int    `json:"default_height"`
-	DefaultSteps   int    `json:"default_steps"`
+	ComfyUIURL      string `json:"comfyui_url"`
+	ModelControlURL string `json:"model_control_url"`
+	Directory       string `json:"directory"`
+	TimeoutSeconds  int    `json:"timeout_seconds"`
+	DefaultWidth    int    `json:"default_width"`
+	DefaultHeight   int    `json:"default_height"`
+	DefaultSteps    int    `json:"default_steps"`
 }
 
 type EutherOxideConfig struct {
@@ -113,12 +114,13 @@ func Default() Config {
 			TimeoutSeconds:   45,
 		},
 		Image: ImageConfig{
-			ComfyUIURL:     "http://192.168.32.88:8188",
-			Directory:      "var/images",
-			TimeoutSeconds: 180,
-			DefaultWidth:   1024,
-			DefaultHeight:  1024,
-			DefaultSteps:   8,
+			ComfyUIURL:      "http://192.168.32.88:8188",
+			ModelControlURL: "http://192.168.32.88:8190/model",
+			Directory:       "var/images",
+			TimeoutSeconds:  180,
+			DefaultWidth:    1024,
+			DefaultHeight:   1024,
+			DefaultSteps:    8,
 		},
 		EutherOxide: EutherOxideConfig{
 			BaseURL:      "http://192.168.32.186:8080",
@@ -304,6 +306,8 @@ func (cfg *Config) set(section, key, raw string) error {
 		switch key {
 		case "comfyui_url":
 			cfg.Image.ComfyUIURL = mustString(raw)
+		case "model_control_url":
+			cfg.Image.ModelControlURL = mustString(raw)
 		case "directory":
 			cfg.Image.Directory = mustString(raw)
 		case "timeout_seconds":

@@ -476,11 +476,24 @@ func handleSettingsPut(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+
+		var imageModelSyncError string
+		if strings.TrimSpace(incoming.ImageModel) != "" {
+			if err := syncImageModelControl(r.Context(), cfg.image, settings.ImageModel); err != nil {
+				imageModelSyncError = err.Error()
+				log.Printf("image model control sync failed for %s: %v", settings.ImageModel, err)
+			}
+		}
+
 		settings.Loras = knownLoras(settings.ImageLora)
-		writeJSON(w, http.StatusOK, map[string]any{
+		response := map[string]any{
 			"user":     user,
 			"settings": settings,
-		})
+		}
+		if imageModelSyncError != "" {
+			response["image_model_sync_error"] = imageModelSyncError
+		}
+		writeJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -1571,6 +1584,31 @@ func postResourceAction(ctx context.Context, endpoint string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("resource action returned %s: %s", resp.Status, string(body))
+	}
+	return nil
+}
+
+func syncImageModelControl(ctx context.Context, image config.ImageConfig, model string) error {
+	endpoint := strings.TrimSpace(image.ModelControlURL)
+	if endpoint == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	body := fmt.Sprintf("model = %q\n", normalizeImageModel(model))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/toml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("image model control returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
 }
