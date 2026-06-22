@@ -824,6 +824,17 @@ func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string)
 			}
 			return eutherNetTextField(body, "plan", "EutherNet har ingen restore plan i senaste snapshoten."), true, nil
 		}
+		if len(args) >= 3 && strings.EqualFold(args[2], "bundle") {
+			profile := "full"
+			if len(args) >= 4 {
+				profile = strings.ToLower(args[3])
+			}
+			body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/restore-bundle?profile="+url.QueryEscape(profile))
+			if err != nil {
+				return "", true, err
+			}
+			return eutherNetRestoreBundle(body), true, nil
+		}
 		return eutherNetHelp(), true, nil
 	case "report", "rapport":
 		body, err := eutherNetGET(ctx, baseURL+"/api/euthernet/report")
@@ -878,6 +889,10 @@ func naturalEutherNetRoute(message string) (string, bool) {
 		return "", false
 	}
 	switch {
+	case strings.Contains(lower, "backup") && (strings.Contains(lower, "restore") || strings.Contains(lower, "återställ") || strings.Contains(lower, "aterstall") || strings.Contains(lower, "bootstrap")):
+		return "/server restore bundle backup", true
+	case strings.Contains(lower, "bundle") || strings.Contains(lower, "bootstrap") || strings.Contains(lower, "install script") || strings.Contains(lower, "installationsskript"):
+		return "/server restore bundle", true
 	case strings.Contains(lower, "restore") || strings.Contains(lower, "återställ") || strings.Contains(lower, "aterstall"):
 		return "/server restore plan", true
 	case strings.Contains(lower, "full report") || strings.Contains(lower, "serverrapport") || strings.Contains(lower, "rapport"):
@@ -946,6 +961,8 @@ func eutherNetHelp() string {
 		"- `/server summary`",
 		"- `/server changes`",
 		"- `/server restore plan`",
+		"- `/server restore bundle`",
+		"- `/server restore bundle backup`",
 		"- `/server full report`",
 		"- `/server commands`",
 		"- `/server refresh`",
@@ -1068,6 +1085,50 @@ func eutherNetReport(body []byte) string {
 		return "EutherNet har ingen full report i senaste snapshoten."
 	}
 	return payload.Report
+}
+
+func eutherNetRestoreBundle(body []byte) string {
+	var payload struct {
+		Profile         string `json:"profile"`
+		CollectedAt     string `json:"collected_at"`
+		Runbook         string `json:"runbook"`
+		BootstrapScript string `json:"bootstrap_script"`
+		CodexPrompt     string `json:"codex_prompt"`
+		Manifest        struct {
+			BasePackages     []string `json:"base_packages"`
+			ObservedPackages []struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"observed_packages"`
+			Repositories []struct {
+				Path string `json:"path"`
+			} `json:"repositories"`
+		} `json:"manifest"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return string(body)
+	}
+	if strings.TrimSpace(payload.Runbook) == "" {
+		return "EutherNet har ingen restore bundle i senaste snapshoten."
+	}
+	lines := []string{
+		fmt.Sprintf("EutherNet restore bundle `%s` från %s.", payload.Profile, payload.CollectedAt),
+		fmt.Sprintf("Baspaket: `%s`.", strings.Join(payload.Manifest.BasePackages, ", ")),
+		fmt.Sprintf("Observerade paket i snapshot: `%d`.", len(payload.Manifest.ObservedPackages)),
+		fmt.Sprintf("Repos i scope: `%d`.", len(payload.Manifest.Repositories)),
+		"",
+		payload.Runbook,
+		"## Bootstrap Script",
+		"",
+		"```sh",
+		strings.TrimSpace(payload.BootstrapScript),
+		"```",
+		"",
+		"## Codex Prompt",
+		"",
+		payload.CodexPrompt,
+	}
+	return strings.Join(lines, "\n")
 }
 
 func eutherNetTextField(body []byte, field string, fallback string) string {
