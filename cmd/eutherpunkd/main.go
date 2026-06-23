@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -193,6 +195,7 @@ type imageRequest struct {
 	Seed           uint64        `json:"seed,omitempty"`
 	ImageModel     string        `json:"image_model,omitempty"`
 	Lora           string        `json:"lora,omitempty"`
+	SourceImage    string        `json:"source_image,omitempty"`
 	Context        []chatMessage `json:"context,omitempty"`
 }
 
@@ -1933,6 +1936,14 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if isSenseNovaImageModel(req.ImageModel) && strings.TrimSpace(req.SourceImage) != "" {
+		uploadedName, err := uploadComfySourceImage(ctx, baseURL, req.SourceImage)
+		if err != nil {
+			return out, err
+		}
+		req.SourceImage = uploadedName
+	}
+
 	prompt, err := buildImagePrompt(image, req)
 	if err != nil {
 		return out, err
@@ -1996,6 +2007,93 @@ func buildImagePrompt(image config.ImageConfig, req imageRequest) (map[string]an
 		return buildSenseNovaPrompt(image, req)
 	}
 	return buildZImagePrompt(image, req)
+}
+
+func uploadComfySourceImage(ctx context.Context, baseURL, source string) (string, error) {
+	data, contentType, err := decodeSourceImage(source)
+	if err != nil {
+		return "", err
+	}
+	ext := ".jpg"
+	if strings.Contains(contentType, "png") {
+		ext = ".png"
+	} else if strings.Contains(contentType, "webp") {
+		ext = ".webp"
+	}
+	filename := fmt.Sprintf("eutherpunk-source-%s%s", randomID(), ext)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("image", filename)
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", err
+	}
+	if err := writer.WriteField("type", "input"); err != nil {
+		return "", err
+	}
+	if err := writer.WriteField("overwrite", "true"); err != nil {
+		return "", err
+	}
+	if err := writer.Close(); err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/upload/image", &body)
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("ComfyUI image upload returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	var uploaded struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &uploaded); err != nil {
+		return "", err
+	}
+	if uploaded.Name == "" {
+		return "", fmt.Errorf("ComfyUI image upload missing name: %s", strings.TrimSpace(string(raw)))
+	}
+	return uploaded.Name, nil
+}
+
+func decodeSourceImage(source string) ([]byte, string, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, "", errors.New("source_image is empty")
+	}
+	contentType := "image/jpeg"
+	if strings.HasPrefix(source, "data:") {
+		meta, payload, ok := strings.Cut(source, ",")
+		if !ok {
+			return nil, "", errors.New("source_image data URL saknar bilddata")
+		}
+		source = payload
+		if strings.Contains(meta, ";base64") {
+			contentType = strings.TrimPrefix(strings.Split(meta, ";")[0], "data:")
+		} else {
+			return nil, "", errors.New("source_image data URL maste vara base64")
+		}
+	}
+	data, err := base64.StdEncoding.DecodeString(source)
+	if err != nil {
+		return nil, "", fmt.Errorf("source_image kunde inte base64-avkodas: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, "", errors.New("source_image decoded to empty data")
+	}
+	return data, contentType, nil
 }
 
 func ensureSenseNovaReady(ctx context.Context, image config.ImageConfig, lora string) error {
@@ -2133,40 +2231,48 @@ func buildSenseNovaPrompt(image config.ImageConfig, req imageRequest) (map[strin
 		imgMode = "interleave"
 		interleaveMax = 1
 	}
-	return map[string]any{
+	samplerInputs := map[string]any{
+		"model":              []any{"1", 0},
+		"img_mode":           imgMode,
+		"prompt":             req.Prompt,
+		"seed":               int(seed % maxComfySeed),
+		"steps":              steps,
+		"target_pixels":      targetPixels,
+		"cfg":                1.0,
+		"img_cfg":            1.0,
+		"timestep_shift":     3.0,
+		"batch_size":         1,
+		"prefetch_count":     1,
+		"interleave_max":     interleaveMax,
+		"cfg_norm":           "none",
+		"enhance":            false,
+		"think_mode":         false,
+		"do_sample":          true,
+		"max_new_tokens":     256,
+		"temperature":        0.7,
+		"top_p":              0.9,
+		"top_k":              0,
+		"repetition_penalty": 0.0,
+	}
+	workflow := map[string]any{
 		"1": comfyNode("SenseNova_SM_Model", map[string]any{
 			"diffusion_models": "none",
 			"gguf":             senseNovaGGUF,
 			"lora":             lora,
 			"attn_backend":     "auto",
 		}),
-		"2": comfyNode("SenseNova_SM_Sampler", map[string]any{
-			"model":              []any{"1", 0},
-			"img_mode":           imgMode,
-			"prompt":             req.Prompt,
-			"seed":               int(seed % maxComfySeed),
-			"steps":              steps,
-			"target_pixels":      targetPixels,
-			"cfg":                1.0,
-			"img_cfg":            1.0,
-			"timestep_shift":     3.0,
-			"batch_size":         1,
-			"prefetch_count":     1,
-			"interleave_max":     interleaveMax,
-			"cfg_norm":           "none",
-			"enhance":            false,
-			"think_mode":         false,
-			"do_sample":          true,
-			"max_new_tokens":     256,
-			"temperature":        0.7,
-			"top_p":              0.9,
-			"top_k":              0,
-			"repetition_penalty": 0.0,
-		}),
+		"2": comfyNode("SenseNova_SM_Sampler", samplerInputs),
 		"3": comfyNode("PreviewImage", map[string]any{
 			"images": []any{"2", 0},
 		}),
-	}, nil
+	}
+	if strings.TrimSpace(req.SourceImage) != "" {
+		workflow["4"] = comfyNode("LoadImage", map[string]any{
+			"image": req.SourceImage,
+		})
+		samplerInputs["image"] = []any{"4", 0}
+	}
+	return workflow, nil
 }
 
 func defaultImageDimension(requested, configured, fallback int) int {

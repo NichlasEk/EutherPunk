@@ -15,6 +15,13 @@ This is the recovery map for EutherPunk chat image generation.
 
 The permanent copy is owned by EutherPunk, not ComfyUI. ComfyUI is only the generator.
 
+When the user attaches an image and asks for `/bild` or the chat emits an
+`EUTHERPUNK_IMAGE_PROMPT`, the browser sends the first attached image as
+`source_image`. For SenseNova models, EutherPunk uploads that source image to
+ComfyUI `/upload/image`, adds a `LoadImage` node, and passes it into
+`SenseNova_SM_Sampler` as the optional `image` input. Z-Image remains
+text-to-image only.
+
 ## Hosts And Ports
 
 - EutherOxide/EutherPunk gateway: `192.168.32.186:8080`

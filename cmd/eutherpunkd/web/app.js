@@ -543,7 +543,7 @@ async function sendPrompt(prompt, images = []) {
   await saveActiveConversation();
   await speak(fullText);
   if (imageTool) {
-    await generateImage(imageTool.prompt, userMessage.content, { addUserMessage: false });
+    await generateImage(imageTool.prompt, userMessage.content, { addUserMessage: false, sourceImage: userMessage.images[0] || null });
   }
 }
 
@@ -561,6 +561,7 @@ async function generateImage(prompt, displayText = "", options = {}) {
   await saveActiveConversation();
 
   try {
+    const sourceImage = options.sourceImage || null;
     const response = await fetch("/api/eutherpunk/images/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -568,6 +569,7 @@ async function generateImage(prompt, displayText = "", options = {}) {
         prompt,
         image_model: userSettings.image_model,
         lora: userSettings.image_lora,
+        source_image: sourceImage ? sourceImage.ollamaImage : "",
         context: modelMessages(conversationMessages.slice(-12)),
       }),
     });
@@ -891,7 +893,7 @@ form.addEventListener("submit", async (event) => {
       await generateImage(imageRequest.prompt, imageRequest.displayText);
     } else if (images.length > 0 && imageRequest) {
       await sendPrompt(prompt, images);
-      await generateImage(imageRequest.prompt, prompt, { addUserMessage: false });
+      await generateImage(imageRequest.prompt, prompt, { addUserMessage: false, sourceImage: images[0] || null });
     } else {
       await sendPrompt(prompt, images);
     }
