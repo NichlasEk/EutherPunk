@@ -642,7 +642,11 @@ async function waitForImageJob(jobId, assistantNode) {
       throw new Error(job.error || "Bildjobbet misslyckades");
     }
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    assistantNode.textContent = job.status === "running" ? `Genererar bild... ${elapsed}s` : `Bildjobb i ko... ${elapsed}s`;
+    if (job.message) {
+      assistantNode.textContent = `${job.message} ${elapsed}s`;
+    } else {
+      assistantNode.textContent = job.status === "running" ? `Genererar bild... ${elapsed}s` : `Bildjobb i ko... ${elapsed}s`;
+    }
   }
   throw new Error("Bildjobbet tog for lang tid");
 }

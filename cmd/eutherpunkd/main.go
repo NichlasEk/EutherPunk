@@ -219,6 +219,7 @@ type imageResponse struct {
 type imageJob struct {
 	ID        string        `json:"job_id"`
 	Status    string        `json:"status"`
+	Message   string        `json:"message,omitempty"`
 	Response  imageResponse `json:"image,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
@@ -1442,8 +1443,13 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 	}
 	releaseOllamaForImage(ctx, cfg)
 	if isSenseNovaImageModel(imageModel) {
-		releaseVoiceModelsForImage(ctx, cfg)
+		setImageJobStatusMessage(jobID, "waiting_tts", "Vantar pa Dots TTS innan SenseNova far GPU:n.")
+		if err := waitForVoiceResourcesForImage(ctx, cfg); err != nil {
+			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+			return
+		}
 	}
+	setImageJobStatus(jobID, "running", imageResponse{}, "")
 	out, err := generateWithComfyUI(ctx, cfg.image, user, req)
 	if err != nil {
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
@@ -1484,8 +1490,24 @@ func setImageJobStatus(id, status string, response imageResponse, errorText stri
 		return
 	}
 	job.Status = status
+	job.Message = ""
 	job.Response = response
 	job.Error = errorText
+	job.UpdatedAt = time.Now().UTC()
+	imageJobs[id] = job
+}
+
+func setImageJobStatusMessage(id, status, message string) {
+	imageJobsMu.Lock()
+	defer imageJobsMu.Unlock()
+	job, ok := imageJobs[id]
+	if !ok {
+		return
+	}
+	job.Status = status
+	job.Message = message
+	job.Response = imageResponse{}
+	job.Error = ""
 	job.UpdatedAt = time.Now().UTC()
 	imageJobs[id] = job
 }
@@ -1554,11 +1576,38 @@ func releaseOllamaForImage(ctx context.Context, cfg serverConfig) {
 	}
 }
 
-func releaseVoiceModelsForImage(ctx context.Context, cfg serverConfig) {
+func waitForVoiceResourcesForImage(ctx context.Context, cfg serverConfig) error {
 	baseURL := strings.TrimRight(cfg.voice.EutherLinkURL, "/")
 	if baseURL == "" {
-		return
+		return nil
 	}
+
+	deadline := time.Now().Add(45 * time.Minute)
+	for attempt := 1; ; attempt++ {
+		err := postResourceActionJSON(
+			ctx,
+			baseURL+"/v1/resources/heavy-tts/suspend",
+			`{"seconds":900,"reason":"eutherpunk_sensenova_image_generation"}`,
+		)
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "409") {
+			log.Printf("voice resource suspend before SenseNova image generation failed: %v", err)
+			if stopErr := postResourceAction(ctx, baseURL+"/v1/resources/dots.tts/stop"); stopErr != nil {
+				log.Printf("voice resource fallback dots stop before SenseNova image generation failed: %v", stopErr)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("Dots TTS ar fortfarande upptagen efter 45 minuter; SenseNova-bildjobbet avbryts")
+		}
+		log.Printf("voice resource busy before SenseNova image generation; waiting for Dots TTS to finish (attempt %d)", attempt)
+		if !sleepContext(ctx, 10*time.Second) {
+			return ctx.Err()
+		}
+	}
+
 	endpoints := []string{
 		"/v1/resources/voxcpm2/unload",
 	}
@@ -1567,14 +1616,37 @@ func releaseVoiceModelsForImage(ctx context.Context, cfg serverConfig) {
 			log.Printf("voice resource release %s before SenseNova image generation failed: %v", endpoint, err)
 		}
 	}
+	return nil
+}
+
+func sleepContext(ctx context.Context, duration time.Duration) bool {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func postResourceAction(ctx context.Context, endpoint string) error {
+	return postResourceActionWithBody(ctx, endpoint, "application/json", nil)
+}
+
+func postResourceActionJSON(ctx context.Context, endpoint, body string) error {
+	return postResourceActionWithBody(ctx, endpoint, "application/json", strings.NewReader(body))
+}
+
+func postResourceActionWithBody(ctx context.Context, endpoint, contentType string, body io.Reader) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return err
+	}
+	if body != nil && contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

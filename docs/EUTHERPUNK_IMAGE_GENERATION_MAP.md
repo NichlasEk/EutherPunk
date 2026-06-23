@@ -115,14 +115,22 @@ The SenseNova sampler is configured conservatively for the shared workstation:
 - `steps = 4` unless overridden by config/request
 - output target is selected from `1:1`, `16:9`, or `9:16` based on requested dimensions
 
-Before a SenseNova job is queued, EutherPunk asks EutherLink to release idle voice
+Before a SenseNova job is queued, EutherPunk asks EutherLink to release voice
 resources through:
 
+- `POST /v1/resources/heavy-tts/suspend`
 - `POST /v1/resources/voxcpm2/unload`
 
-Dots TTS is intentionally kept warm so server voice stays available. This means
-SenseNova relies on conservative sampler settings and swap headroom instead of
-fully clearing the TTS worker from memory.
+GrapheneOS Matcha stays available for lightweight server voice, but heavy local
+TTS models are temporarily suspended so SenseNova can use the GPU instead of
+competing with loaded speech models. During the suspension window, new Dots TTS
+requests can fall back to `grapheneos-matcha-en` through EutherLink instead of
+failing hard or immediately rewarming Dots.
+
+If Dots is already rendering an active job, EutherLink returns busy instead of
+terminating it. EutherPunk keeps the SenseNova image job in `waiting_tts` and
+retries the suspend request until Dots finishes, then starts the ComfyUI image
+generation.
 
 The workstation also has a Btrfs-compatible persistent swap file:
 
