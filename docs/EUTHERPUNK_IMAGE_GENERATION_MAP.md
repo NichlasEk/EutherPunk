@@ -27,6 +27,10 @@ for chat/vision context and a larger 1024px `source_image` for SenseNova edit.
 Do not reuse the 256px vision image for editing; it is too small for preserving
 the original scene.
 
+Any request with `source_image` is forced to `sensenova-u1-8b`. Z-Image Turbo is
+text-to-image only and must not receive edit jobs because it will ignore the
+uploaded source image.
+
 ## Hosts And Ports
 
 - EutherOxide/EutherPunk gateway: `192.168.32.186:8080`

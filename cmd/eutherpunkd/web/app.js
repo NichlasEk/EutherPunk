@@ -553,7 +553,7 @@ async function generateImage(prompt, displayText = "", options = {}) {
   const shouldAddUserMessage = options.addUserMessage !== false;
   const userMessage = shouldAddUserMessage ? { role: "user", content: displayText || `/bild ${prompt}`, images: options.userImages || [] } : null;
   if (userMessage) {
-    addMessage("user", userMessage.content);
+    addMessage("user", userMessage.content, userMessage.images);
   }
   const assistantNode = addMessage("assistant", "Genererar bild...");
   if (userMessage) {
@@ -564,13 +564,14 @@ async function generateImage(prompt, displayText = "", options = {}) {
 
   try {
     const sourceImage = options.sourceImage || null;
+    const imageModel = sourceImage ? "sensenova-u1-8b" : userSettings.image_model;
     const response = await fetch("/api/eutherpunk/images/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt,
-        image_model: userSettings.image_model,
-        lora: userSettings.image_lora,
+        image_model: imageModel,
+        lora: imageModel === "sensenova-u1-8b" ? userSettings.image_lora : "none",
         source_image: sourceImage ? (sourceImage.sourceImage || sourceImage.ollamaImage) : "",
         context: options.skipContext ? [] : modelMessages(conversationMessages.slice(-12)),
       }),
@@ -1021,12 +1022,16 @@ function imageEditPrompt(instruction) {
     [/\bbjörn\b/gi, "bear"],
     [/\blagg till\b/gi, "add"],
     [/\blägg till\b/gi, "add"],
+    [/\blagg in\b/gi, "add"],
+    [/\blägg in\b/gi, "add"],
     [/\beditera\b/gi, "edit"],
     [/\bredigera\b/gi, "edit"],
     [/\bbilden\b/gi, "the image"],
     [/\bbild\b/gi, "image"],
     [/\boch\b/gi, "and"],
     [/\ben\b/gi, "a"],
+    [/\bpå den\b/gi, "to it"],
+    [/\bpa den\b/gi, "to it"],
   ];
   for (const [pattern, replacement] of replacements) {
     edit = edit.replace(pattern, replacement);

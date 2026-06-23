@@ -1428,15 +1428,24 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 	if strings.TrimSpace(req.Lora) == "" {
 		req.Lora = settings.ImageLora
 	}
+	req.ImageModel = effectiveImageModel(req.ImageModel, req.SourceImage)
 	imageModel := normalizeImageModel(req.ImageModel)
-	if !isSenseNovaImageModel(imageModel) || imageModel == "sensenova-u1-8b-fast" {
-		req.Lora = "none"
-	} else if err := ensureSenseNovaReady(ctx, cfg.image, req.Lora); err != nil {
+	if err := syncImageModelControl(ctx, cfg.image, imageModel); err != nil {
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
 		return
 	}
+	if !isSenseNovaImageModel(imageModel) || imageModel == "sensenova-u1-8b-fast" {
+		req.Lora = "none"
+	} else {
+		setImageJobStatusMessage(jobID, "loading_model", "Laddar SenseNova-profilen i ComfyUI.")
+		if err := waitForSenseNovaReady(ctx, cfg.image, req.Lora, 5*time.Minute); err != nil {
+			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+			return
+		}
+	}
 	if imageModel == "sensenova-u1-8b-fast" {
-		if err := ensureSenseNovaReady(ctx, cfg.image, "none"); err != nil {
+		setImageJobStatusMessage(jobID, "loading_model", "Laddar SenseNova-profilen i ComfyUI.")
+		if err := waitForSenseNovaReady(ctx, cfg.image, "none", 5*time.Minute); err != nil {
 			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
 			return
 		}
@@ -1922,6 +1931,7 @@ func isEmptyVisionAnswer(answer string) bool {
 
 func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user string, req imageRequest) (imageResponse, error) {
 	var out imageResponse
+	req.ImageModel = effectiveImageModel(req.ImageModel, req.SourceImage)
 	baseURL := strings.TrimRight(image.ComfyUIURL, "/")
 	if baseURL == "" {
 		return out, errors.New("image.comfyui_url is not configured")
@@ -2127,6 +2137,29 @@ func ensureSenseNovaReady(ctx context.Context, image config.ImageConfig, lora st
 		return fmt.Errorf("SenseNova-LoRA saknas i ComfyUI: %s", lora)
 	}
 	return nil
+}
+
+func waitForSenseNovaReady(ctx context.Context, image config.ImageConfig, lora string, timeout time.Duration) error {
+	if timeout <= 0 {
+		return ensureSenseNovaReady(ctx, image, lora)
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		if err := ensureSenseNovaReady(ctx, image, lora); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("SenseNova blev inte redo inom %s: %w", timeout.Round(time.Second), lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
@@ -2662,6 +2695,13 @@ func normalizeImageModel(value string) string {
 	default:
 		return "z-image-turbo"
 	}
+}
+
+func effectiveImageModel(model, sourceImage string) string {
+	if strings.TrimSpace(sourceImage) != "" {
+		return "sensenova-u1-8b"
+	}
+	return normalizeImageModel(model)
 }
 
 func isSenseNovaImageModel(value string) bool {
