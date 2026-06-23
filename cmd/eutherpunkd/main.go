@@ -87,6 +87,8 @@ type promptSettings struct {
 	ImageToolSystemSuffix     string `json:"image_tool_system_suffix"`
 	ImageContextRewriteSystem string `json:"image_context_rewrite_system"`
 	ImageContextRewriteUser   string `json:"image_context_rewrite_user"`
+	SecondSightClassification string `json:"secondsight_classification_prompt"`
+	SecondSightImageTemplate  string `json:"secondsight_image_prompt_template"`
 	HiddenImageMemoryTemplate string `json:"hidden_image_memory_template"`
 }
 
@@ -2500,6 +2502,8 @@ func defaultPromptSettings() promptSettings {
 		ImageToolSystemSuffix:     "Om anvandaren vill skapa, generera, rita, kombinera eller variera en bild och du har tillracklig kontext, skriv en kort vanlig bekraftelse och lagg sedan en egen sista rad exakt i formatet: EUTHERPUNK_IMAGE_PROMPT: <en tydlig engelsk bildprompt>. Anvand sparad intern bildmetadata nar anvandaren refererar till tidigare bilder. Skriv aldrig denna rad for vanliga fragor.",
 		ImageContextRewriteSystem: "You convert a chat conversation into one concise English prompt for an image generator. Use the latest user request as the instruction, include relevant visual context from earlier messages or images, and return only the final image prompt with no markdown or explanations.",
 		ImageContextRewriteUser:   "Final image request: {{prompt}}\nWrite the image generation prompt.",
+		SecondSightClassification: "Look at the attached image and identify the main visible subject in 1-5 words. Prefer concrete nouns like bear, fox, person, empty yard, car, bird, forest path. If uncertain, say what it most resembles. Return only the label.",
+		SecondSightImageTemplate:  "Transform the provided source image into a playful mythological collectible artifact. The local vision label is: {{classification}}. The user's SecondSight note is: {{user_prompt}}. Preserve the original camera angle, scene layout, lighting direction, and recognizable subject placement, but reinterpret the subject as a magical folklore version with whimsical details, rich texture, and child-friendly fantasy energy. Do not add readable text, letters, captions, logos, UI marks, or watermarks.",
 		HiddenImageMemoryTemplate: "Intern bildmetadata {{index}}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: {{description}}",
 	}
 }
@@ -2570,6 +2574,10 @@ func parsePromptSettings(raw string) (promptSettings, error) {
 			prompts.ImageContextRewriteSystem = parsed
 		case "image_context_rewrite_user":
 			prompts.ImageContextRewriteUser = parsed
+		case "secondsight_classification_prompt":
+			prompts.SecondSightClassification = parsed
+		case "secondsight_image_prompt_template":
+			prompts.SecondSightImageTemplate = parsed
 		case "hidden_image_memory_template":
 			prompts.HiddenImageMemoryTemplate = parsed
 		default:
@@ -2593,6 +2601,8 @@ func formatPromptSettings(prompts promptSettings) string {
 	writePromptString(&b, "image_tool_system_suffix", prompts.ImageToolSystemSuffix)
 	writePromptString(&b, "image_context_rewrite_system", prompts.ImageContextRewriteSystem)
 	writePromptString(&b, "image_context_rewrite_user", prompts.ImageContextRewriteUser)
+	writePromptString(&b, "secondsight_classification_prompt", prompts.SecondSightClassification)
+	writePromptString(&b, "secondsight_image_prompt_template", prompts.SecondSightImageTemplate)
 	writePromptString(&b, "hidden_image_memory_template", prompts.HiddenImageMemoryTemplate)
 	return strings.TrimRight(b.String(), "\n")
 }

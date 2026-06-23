@@ -61,6 +61,10 @@ let imageModels = [
 ];
 let imageLoras = ["none"];
 let promptSettings = {
+  secondsight_classification_prompt:
+    "Look at the attached image and identify the main visible subject in 1-5 words. Prefer concrete nouns like bear, fox, person, empty yard, car, bird, forest path. If uncertain, say what it most resembles. Return only the label.",
+  secondsight_image_prompt_template:
+    "Transform the provided source image into a playful mythological collectible artifact. The local vision label is: {{classification}}. The user's SecondSight note is: {{user_prompt}}. Preserve the original camera angle, scene layout, lighting direction, and recognizable subject placement, but reinterpret the subject as a magical folklore version with whimsical details, rich texture, and child-friendly fantasy energy. Do not add readable text, letters, captions, logos, UI marks, or watermarks.",
   hidden_image_memory_template:
     "Intern bildmetadata {{index}}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: {{description}}",
 };
@@ -588,7 +592,7 @@ async function generateImage(prompt, displayText = "", options = {}) {
     const generatedImage = { url: payload.url, alt: prompt };
     assistantNode.replaceChildren();
     const textNode = document.createElement("div");
-    textNode.textContent = "Bild klar.";
+    textNode.textContent = options.doneText || "Bild klar.";
     const imageWrap = document.createElement("div");
     imageWrap.className = "messageImages";
     const img = document.createElement("img");
@@ -610,6 +614,84 @@ async function generateImage(prompt, displayText = "", options = {}) {
     }
     throw error;
   }
+}
+
+async function runSecondSight(prompt, images = []) {
+  if (images.length === 0) {
+    throw new Error("SecondSight behöver en bild.");
+  }
+  const sourceImage = images[0];
+  const userMessage = {
+    role: "user",
+    content: prompt || "SecondSight",
+    images,
+  };
+  addMessage("user", userMessage.content, images);
+  conversationMessages.push(userMessage);
+  trimHistory();
+  await saveActiveConversation();
+
+  const assistantNode = addMessage("assistant", "SecondSight tolkar bilden...");
+  try {
+    const classification = await classifySecondSightImage(sourceImage, prompt);
+    sourceImage.description = classification;
+    const label = classification || "okänt motiv";
+    const imagePrompt = secondSightImagePrompt(label, prompt);
+    assistantNode.textContent = `SecondSight såg: ${label}. Tramslaterar...`;
+    conversationMessages.push({
+      role: "assistant",
+      content: `SecondSight såg: ${label}.`,
+      images: [],
+    });
+    trimHistory();
+    await saveActiveConversation();
+    await generateImage(imagePrompt, prompt, {
+      addUserMessage: false,
+      sourceImage,
+      skipContext: true,
+      doneText: `SecondSight klar: ${label}.`,
+    });
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function classifySecondSightImage(image, userPrompt = "") {
+  const classificationPrompt = (promptSettings.secondsight_classification_prompt || "").trim()
+    || "Identify the main visible subject in this image in 1-5 words. Return only the label.";
+  const response = await fetch("/api/eutherpunk/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: userSettings.vision_model,
+      messages: [{
+        role: "user",
+        content: `${classificationPrompt}\n\nUser SecondSight note: ${userPrompt || "SecondSight"}`,
+        images: [image.ollamaImage],
+      }],
+    }),
+  });
+  const payload = await readJSONResponse(response);
+  if (!response.ok) {
+    throw new Error(payload.error || response.statusText);
+  }
+  return cleanSecondSightClassification(payload.message || "");
+}
+
+function cleanSecondSightClassification(value) {
+  return String(value || "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 96);
+}
+
+function secondSightImagePrompt(classification, userPrompt = "") {
+  const template = (promptSettings.secondsight_image_prompt_template || "").trim()
+    || "Transform the provided source image into a playful mythological collectible artifact. Subject: {{classification}}. User note: {{user_prompt}}. Preserve the original scene and do not add text.";
+  return template
+    .split("{{classification}}").join(classification || "unknown subject")
+    .split("{{user_prompt}}").join(userPrompt || "SecondSight");
 }
 
 async function waitForImageJob(jobId, assistantNode) {
@@ -906,6 +988,8 @@ form.addEventListener("submit", async (event) => {
     const imageEditRequest = images.length > 0 ? parseImageEditRequest(prompt) : null;
     if (images.length === 0 && isImageMetadataRequest(prompt)) {
       await showStoredImageMetadata(prompt);
+    } else if (images.length > 0 && isSecondSightRequest(prompt)) {
+      await runSecondSight(prompt, images);
     } else if (imageEditRequest) {
       await generateImage(imageEditRequest.prompt, prompt, {
         sourceImage: images[0] || null,
@@ -992,6 +1076,11 @@ function parseImageRequest(prompt) {
     return null;
   }
   return { prompt: trimmed, displayText: trimmed };
+}
+
+function isSecondSightRequest(prompt) {
+  const normalized = normalizeIntentText(prompt);
+  return /\bsec(?:o|ou)nd\s*sight\b/.test(normalized) || /\bsec(?:o|ou)ndsight\b/.test(normalized);
 }
 
 function parseImageEditRequest(prompt) {
