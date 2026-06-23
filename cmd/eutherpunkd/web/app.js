@@ -6,6 +6,8 @@ const newChatButton = document.querySelector("#newChatButton");
 const form = document.querySelector("#chatForm");
 const promptEl = document.querySelector("#prompt");
 const imagePreviewEl = document.querySelector("#imagePreview");
+const imageButton = document.querySelector("#imageButton");
+const imageInput = document.querySelector("#imageInput");
 const micButton = document.querySelector("#micButton");
 const voiceToggle = document.querySelector("#voiceToggle");
 const serverVoiceToggle = document.querySelector("#serverVoiceToggle");
@@ -1092,6 +1094,20 @@ promptEl.addEventListener("paste", async (event) => {
   }
   event.preventDefault();
   await Promise.all(files.map(addImageFile));
+});
+
+imageButton.addEventListener("click", () => {
+  imageInput.click();
+});
+
+imageInput.addEventListener("change", async () => {
+  const files = [...(imageInput.files || [])].filter((file) => file.type.startsWith("image/"));
+  imageInput.value = "";
+  if (files.length === 0) {
+    return;
+  }
+  await Promise.all(files.map(addImageFile));
+  promptEl.focus();
 });
 
 form.addEventListener("dragover", (event) => {

@@ -34,6 +34,8 @@
 
       <form id="chatForm" class="composer">
         <button id="micButton" class="icon" type="button" title="Prata">Mic</button>
+        <button id="imageButton" class="icon" type="button" title="Lägg till bild">Bild</button>
+        <input id="imageInput" type="file" accept="image/*" multiple hidden>
         <div class="inputStack">
           <div id="imagePreview" class="imagePreview" aria-live="polite"></div>
           <textarea id="prompt" rows="2" placeholder="Skriv till EutherPunk..."></textarea>
@@ -88,6 +90,6 @@
         </div>
       </form>
     </dialog>
-    <script src="/web/app.js?v=20260623-force-sensenova-edit"></script>
+    <script src="/web/app.js?v=20260623-mobile-image-input"></script>
   </body>
 </html>
