@@ -31,6 +31,8 @@ const settingsSaveButton = document.querySelector("#settingsSaveButton");
 const maxHistoryMessages = 30;
 const maxVisionImageSide = 256;
 const visionImageQuality = 0.72;
+const maxEditImageSide = 1024;
+const editImageQuality = 0.9;
 let ttsEnabled = false;
 let serverVoiceEnabled = false;
 let recognition = null;
@@ -569,7 +571,7 @@ async function generateImage(prompt, displayText = "", options = {}) {
         prompt,
         image_model: userSettings.image_model,
         lora: userSettings.image_lora,
-        source_image: sourceImage ? sourceImage.ollamaImage : "",
+        source_image: sourceImage ? (sourceImage.sourceImage || sourceImage.ollamaImage) : "",
         context: options.skipContext ? [] : modelMessages(conversationMessages.slice(-12)),
       }),
     });
@@ -822,17 +824,28 @@ async function addImageFile(file) {
   if (!file.type.startsWith("image/")) {
     return;
   }
-  const dataURL = await compressImageFile(file, maxVisionImageSide, visionImageQuality);
+  const [dataURL, editDataURL] = await Promise.all([
+    compressImageFile(file, maxVisionImageSide, visionImageQuality),
+    compressImageFile(file, maxEditImageSide, editImageQuality),
+  ]);
   const [, base64 = ""] = dataURL.split(",", 2);
+  const [, sourceBase64 = ""] = editDataURL.split(",", 2);
   if (!base64) {
     return;
   }
-  pendingImages.push({
+  const image = {
     name: file.name,
     dataURL,
     alt: file.name || "Bild",
     ollamaImage: base64,
-  });
+  };
+  if (sourceBase64) {
+    Object.defineProperty(image, "sourceImage", {
+      value: sourceBase64,
+      enumerable: false,
+    });
+  }
+  pendingImages.push(image);
   renderImagePreview();
 }
 
@@ -1000,6 +1013,7 @@ function parseImageEditRequest(prompt) {
 
 function imageEditPrompt(instruction) {
   let edit = instruction.trim();
+  edit = edit.replace(/^\s*(kan du|skulle du kunna|could you|can you)\s+/i, "");
   const replacements = [
     [/\bbrunbjorn\b/gi, "brown bear"],
     [/\bbrunbjörn\b/gi, "brown bear"],
@@ -1011,11 +1025,14 @@ function imageEditPrompt(instruction) {
     [/\bredigera\b/gi, "edit"],
     [/\bbilden\b/gi, "the image"],
     [/\bbild\b/gi, "image"],
+    [/\boch\b/gi, "and"],
+    [/\ben\b/gi, "a"],
   ];
   for (const [pattern, replacement] of replacements) {
     edit = edit.replace(pattern, replacement);
   }
-  return `Edit the provided source image according to this instruction: ${edit}. Preserve the original scene, camera angle, lighting, perspective, and background. Make the edit look natural and photorealistic.`;
+  edit = edit.replace(/\?+$/g, "").trim();
+  return `Edit the provided source image. Instruction: ${edit}. Preserve the original scene, camera angle, lighting, perspective, background, colors, and image composition as much as possible. Add only the requested visual change. Do not add text, letters, symbols, captions, watermark, logo, or UI marks. Make the edit natural and photorealistic.`;
 }
 
 function looksLikeImageGenerationRequest(prompt) {

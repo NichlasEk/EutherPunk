@@ -22,6 +22,11 @@ ComfyUI `/upload/image`, adds a `LoadImage` node, and passes it into
 `SenseNova_SM_Sampler` as the optional `image` input. Z-Image remains
 text-to-image only.
 
+The browser keeps two compressed forms of an uploaded image: a small 256px image
+for chat/vision context and a larger 1024px `source_image` for SenseNova edit.
+Do not reuse the 256px vision image for editing; it is too small for preserving
+the original scene.
+
 ## Hosts And Ports
 
 - EutherOxide/EutherPunk gateway: `192.168.32.186:8080`
