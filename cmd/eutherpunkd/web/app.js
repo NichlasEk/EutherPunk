@@ -549,7 +549,7 @@ async function sendPrompt(prompt, images = []) {
 
 async function generateImage(prompt, displayText = "", options = {}) {
   const shouldAddUserMessage = options.addUserMessage !== false;
-  const userMessage = shouldAddUserMessage ? { role: "user", content: displayText || `/bild ${prompt}`, images: [] } : null;
+  const userMessage = shouldAddUserMessage ? { role: "user", content: displayText || `/bild ${prompt}`, images: options.userImages || [] } : null;
   if (userMessage) {
     addMessage("user", userMessage.content);
   }
@@ -570,7 +570,7 @@ async function generateImage(prompt, displayText = "", options = {}) {
         image_model: userSettings.image_model,
         lora: userSettings.image_lora,
         source_image: sourceImage ? sourceImage.ollamaImage : "",
-        context: modelMessages(conversationMessages.slice(-12)),
+        context: options.skipContext ? [] : modelMessages(conversationMessages.slice(-12)),
       }),
     });
     let payload = await readJSONResponse(response);
@@ -887,8 +887,15 @@ form.addEventListener("submit", async (event) => {
   form.querySelector("button[type='submit']").disabled = true;
   try {
     const imageRequest = parseImageRequest(prompt);
+    const imageEditRequest = images.length > 0 ? parseImageEditRequest(prompt) : null;
     if (images.length === 0 && isImageMetadataRequest(prompt)) {
       await showStoredImageMetadata(prompt);
+    } else if (imageEditRequest) {
+      await generateImage(imageEditRequest.prompt, prompt, {
+        sourceImage: images[0] || null,
+        userImages: images,
+        skipContext: true,
+      });
     } else if (images.length === 0 && imageRequest) {
       await generateImage(imageRequest.prompt, imageRequest.displayText);
     } else if (images.length > 0 && imageRequest) {
@@ -969,6 +976,46 @@ function parseImageRequest(prompt) {
     return null;
   }
   return { prompt: trimmed, displayText: trimmed };
+}
+
+function parseImageEditRequest(prompt) {
+  const trimmed = prompt.trim();
+  const normalized = normalizeIntentText(trimmed);
+  if (!normalized) {
+    return null;
+  }
+  const editPatterns = [
+    /\b(?:editera|redigera|andra|modifiera|fixa|lagg till|lägg till|satt in|sätt in|ta bort|byt ut)\b/,
+    /\b(?:edit|modify|change|add|insert|remove|replace)\b/,
+  ];
+  const hasAction = editPatterns.some((pattern) => pattern.test(normalized));
+  if (!hasAction) {
+    return null;
+  }
+  return {
+    prompt: imageEditPrompt(trimmed),
+    displayText: trimmed,
+  };
+}
+
+function imageEditPrompt(instruction) {
+  let edit = instruction.trim();
+  const replacements = [
+    [/\bbrunbjorn\b/gi, "brown bear"],
+    [/\bbrunbjörn\b/gi, "brown bear"],
+    [/\bbjorn\b/gi, "bear"],
+    [/\bbjörn\b/gi, "bear"],
+    [/\blagg till\b/gi, "add"],
+    [/\blägg till\b/gi, "add"],
+    [/\beditera\b/gi, "edit"],
+    [/\bredigera\b/gi, "edit"],
+    [/\bbilden\b/gi, "the image"],
+    [/\bbild\b/gi, "image"],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    edit = edit.replace(pattern, replacement);
+  }
+  return `Edit the provided source image according to this instruction: ${edit}. Preserve the original scene, camera angle, lighting, perspective, and background. Make the edit look natural and photorealistic.`;
 }
 
 function looksLikeImageGenerationRequest(prompt) {
