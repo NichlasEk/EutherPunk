@@ -142,15 +142,22 @@ function uniqueValues(values) {
 }
 
 function renderChatModelOptions() {
-  if (!chatModelOptions) {
+  if (!chatModelInput) {
     return;
   }
-  chatModelOptions.replaceChildren();
-  for (const model of chatModels) {
-    const option = document.createElement("option");
-    option.value = model;
-    chatModelOptions.appendChild(option);
+  const selected = userSettings.chat_model || chatModelInput.value || "qwen3-coder:30b";
+  const options = uniqueValues([...chatModels, selected]).map((model) => [model, chatModelLabel(model)]);
+  renderOptions(chatModelInput, options, selected);
+}
+
+function chatModelLabel(model) {
+  if (model === "supergemma4-26b-free:latest") {
+    return "SuperGemma4 26B Free";
   }
+  if (model === "qwen3-coder:30b") {
+    return "Qwen3 Coder 30B";
+  }
+  return model;
 }
 
 async function loadPromptAdmin() {
@@ -184,7 +191,6 @@ async function savePromptAdmin() {
 }
 
 function renderSettingsForm() {
-  chatModelInput.value = userSettings.chat_model || "";
   renderChatModelOptions();
   visionModelInput.value = userSettings.vision_model || "";
   voiceBackendInput.value = userSettings.voice_backend || "";
