@@ -35,6 +35,7 @@
       <form id="chatForm" class="composer">
         <button id="micButton" class="icon" type="button" title="Prata">Mic</button>
         <button id="imageButton" class="icon" type="button" title="Lägg till bild">Bild</button>
+        <button id="promptAdminChatButton" class="icon" type="button" title="Admin AI-TOML">TOML</button>
         <input id="imageInput" type="file" accept="image/*" multiple hidden>
         <div class="inputStack">
           <div id="imagePreview" class="imagePreview" aria-live="polite"></div>
@@ -71,7 +72,7 @@
           <input id="voiceBackendInput" name="voice_backend" autocomplete="off">
         </label>
         <div class="settingsActions">
-          <button id="promptAdminButton" type="button">Prompt-TOML</button>
+          <button id="promptAdminButton" type="button">AI-TOML</button>
           <button id="settingsSaveButton" type="submit">Spara</button>
         </div>
       </form>
@@ -79,7 +80,7 @@
     <dialog id="promptAdminDialog" class="settingsDialog promptAdminDialog">
       <form id="promptAdminForm" method="dialog">
         <div class="settingsHead">
-          <strong>Prompt-TOML</strong>
+          <strong>AI-TOML</strong>
           <button id="promptAdminCloseButton" type="button" aria-label="Stäng">×</button>
         </div>
         <p id="promptAdminPath" class="settingsHint"></p>

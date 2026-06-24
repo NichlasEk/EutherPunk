@@ -255,7 +255,7 @@ button:disabled {
 .composer {
   grid-column: 2;
   display: grid;
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto auto auto 1fr auto;
   gap: 10px;
   align-items: end;
   border-top: 1px solid var(--line);
@@ -426,7 +426,7 @@ select {
   }
 
   .composer {
-    grid-template-columns: auto auto 1fr;
+    grid-template-columns: auto auto auto 1fr;
   }
 
   .composer button[type="submit"] {

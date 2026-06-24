@@ -79,20 +79,23 @@ type chatRequest struct {
 }
 
 type promptSettings struct {
-	DefaultSystem             string `json:"default_system"`
-	VisionSystemSuffix        string `json:"vision_system_suffix"`
-	VisionFallbackBrief       string `json:"vision_fallback_brief"`
-	VisionFallbackSubject     string `json:"vision_fallback_subject"`
-	VisionMetadataSystem      string `json:"vision_metadata_system"`
-	VisionMetadataUser        string `json:"vision_metadata_user"`
-	VisionAnswerSystem        string `json:"vision_answer_system"`
-	VisionAnswerUserPrefix    string `json:"vision_answer_user_prefix"`
-	ImageToolSystemSuffix     string `json:"image_tool_system_suffix"`
-	ImageContextRewriteSystem string `json:"image_context_rewrite_system"`
-	ImageContextRewriteUser   string `json:"image_context_rewrite_user"`
-	SecondSightClassification string `json:"secondsight_classification_prompt"`
-	SecondSightImageTemplate  string `json:"secondsight_image_prompt_template"`
-	HiddenImageMemoryTemplate string `json:"hidden_image_memory_template"`
+	DefaultSystem             string  `json:"default_system"`
+	VisionSystemSuffix        string  `json:"vision_system_suffix"`
+	VisionFallbackBrief       string  `json:"vision_fallback_brief"`
+	VisionFallbackSubject     string  `json:"vision_fallback_subject"`
+	VisionMetadataSystem      string  `json:"vision_metadata_system"`
+	VisionMetadataUser        string  `json:"vision_metadata_user"`
+	VisionAnswerSystem        string  `json:"vision_answer_system"`
+	VisionAnswerUserPrefix    string  `json:"vision_answer_user_prefix"`
+	ImageToolSystemSuffix     string  `json:"image_tool_system_suffix"`
+	ImageContextRewriteSystem string  `json:"image_context_rewrite_system"`
+	ImageContextRewriteUser   string  `json:"image_context_rewrite_user"`
+	SecondSightClassification string  `json:"secondsight_classification_prompt"`
+	SecondSightImageTemplate  string  `json:"secondsight_image_prompt_template"`
+	HiddenImageMemoryTemplate string  `json:"hidden_image_memory_template"`
+	KreaCFG                   float64 `json:"krea_cfg"`
+	KreaRebalanceMultiplier   float64 `json:"krea_rebalance_multiplier"`
+	KreaNegativePrompt        string  `json:"krea_negative_prompt"`
 }
 
 type chatMessage struct {
@@ -192,16 +195,18 @@ type ttsRequest struct {
 }
 
 type imageRequest struct {
-	Prompt         string        `json:"prompt"`
-	NegativePrompt string        `json:"negative_prompt,omitempty"`
-	Width          int           `json:"width,omitempty"`
-	Height         int           `json:"height,omitempty"`
-	Steps          int           `json:"steps,omitempty"`
-	Seed           uint64        `json:"seed,omitempty"`
-	ImageModel     string        `json:"image_model,omitempty"`
-	Lora           string        `json:"lora,omitempty"`
-	SourceImage    string        `json:"source_image,omitempty"`
-	Context        []chatMessage `json:"context,omitempty"`
+	Prompt                  string        `json:"prompt"`
+	NegativePrompt          string        `json:"negative_prompt,omitempty"`
+	Width                   int           `json:"width,omitempty"`
+	Height                  int           `json:"height,omitempty"`
+	Steps                   int           `json:"steps,omitempty"`
+	Seed                    uint64        `json:"seed,omitempty"`
+	ImageModel              string        `json:"image_model,omitempty"`
+	Lora                    string        `json:"lora,omitempty"`
+	SourceImage             string        `json:"source_image,omitempty"`
+	Context                 []chatMessage `json:"context,omitempty"`
+	KreaCFG                 float64       `json:"krea_cfg,omitempty"`
+	KreaRebalanceMultiplier float64       `json:"krea_rebalance_multiplier,omitempty"`
 }
 
 type userSettings struct {
@@ -1468,6 +1473,9 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 	if prompt := imagePromptFromContext(ctx, cfg, req); prompt != "" {
 		req.Prompt = prompt
 	}
+	if isKreaImageModel(imageModel) {
+		applyKreaPromptSettings(cfg, &req)
+	}
 	releaseOllamaForImage(ctx, cfg)
 	if isSenseNovaImageModel(imageModel) {
 		setImageJobStatusMessage(jobID, "waiting_tts", "Vantar pa Dots TTS innan SenseNova far GPU:n.")
@@ -1580,6 +1588,23 @@ func imagePromptFromContext(ctx context.Context, cfg serverConfig, req imageRequ
 		return req.Prompt
 	}
 	return prompt
+}
+
+func applyKreaPromptSettings(cfg serverConfig, req *imageRequest) {
+	prompts, _, err := readPromptSettings(cfg.promptsPath)
+	if err != nil {
+		log.Printf("krea prompt settings failed: %v", err)
+		prompts = defaultPromptSettings()
+	}
+	if strings.TrimSpace(req.NegativePrompt) == "" {
+		req.NegativePrompt = prompts.KreaNegativePrompt
+	}
+	if req.KreaCFG <= 0 {
+		req.KreaCFG = prompts.KreaCFG
+	}
+	if req.KreaRebalanceMultiplier <= 0 {
+		req.KreaRebalanceMultiplier = prompts.KreaRebalanceMultiplier
+	}
 }
 
 func cleanImagePrompt(prompt string) string {
@@ -2347,7 +2372,15 @@ func buildKreaPrompt(image config.ImageConfig, req imageRequest) (map[string]any
 	}
 	negative := strings.TrimSpace(req.NegativePrompt)
 	if negative == "" {
-		negative = "text, watermark, blurry, low quality, distorted hands"
+		negative = defaultPromptSettings().KreaNegativePrompt
+	}
+	cfgValue := req.KreaCFG
+	if cfgValue <= 0 {
+		cfgValue = defaultPromptSettings().KreaCFG
+	}
+	rebalanceMultiplier := req.KreaRebalanceMultiplier
+	if rebalanceMultiplier <= 0 {
+		rebalanceMultiplier = defaultPromptSettings().KreaRebalanceMultiplier
 	}
 
 	return map[string]any{
@@ -2369,7 +2402,7 @@ func buildKreaPrompt(image config.ImageConfig, req imageRequest) (map[string]any
 		}),
 		"5": comfyNode("ConditioningKrea2Rebalance", map[string]any{
 			"conditioning":      []any{"4", 0},
-			"multiplier":        4,
+			"multiplier":        rebalanceMultiplier,
 			"per_layer_weights": "1.0,1.0,1.0,1.0,1.0,1.0,1.0,2.5,5.0,1.1,4.0,1.0",
 		}),
 		"6": comfyNode("CLIPTextEncode", map[string]any{
@@ -2388,7 +2421,7 @@ func buildKreaPrompt(image config.ImageConfig, req imageRequest) (map[string]any
 			"latent_image": []any{"7", 0},
 			"seed":         int(seed % maxComfySeed),
 			"steps":        steps,
-			"cfg":          3.5,
+			"cfg":          cfgValue,
 			"sampler_name": "euler",
 			"scheduler":    "simple",
 			"denoise":      1,
@@ -2678,6 +2711,9 @@ func defaultPromptSettings() promptSettings {
 		SecondSightClassification: "Look at the attached image and identify the main visible subject in 1-5 words. Prefer concrete nouns like bear, fox, person, empty yard, car, bird, forest path. If uncertain, say what it most resembles. Return only the label.",
 		SecondSightImageTemplate:  "Transform the provided source image into a playful mythological collectible artifact. The local vision label is: {{classification}}. The user's SecondSight note is: {{user_prompt}}. Preserve the original camera angle, scene layout, lighting direction, and recognizable subject placement, but reinterpret the subject as a magical folklore version with whimsical details, rich texture, and child-friendly fantasy energy. Do not add readable text, letters, captions, logos, UI marks, or watermarks.",
 		HiddenImageMemoryTemplate: "Intern bildmetadata {{index}}: Detta ar EutherPunks sparade semantiska beskrivning av en tidigare bild i chatten, inte EXIF eller filmetadata. Om anvandaren fragar efter bildmetadata ska du visa eller sammanfatta denna text. Anvand den ocksa nar anvandaren refererar till bilden senare. Metadata: {{description}}",
+		KreaCFG:                   2.0,
+		KreaRebalanceMultiplier:   4.0,
+		KreaNegativePrompt:        "text, watermark, blurry, low quality, distorted hands, neon, oversaturated, cyberpunk lighting, plastic skin, CGI, cartoon",
 	}
 }
 
@@ -2713,48 +2749,74 @@ func parsePromptSettings(raw string) (promptSettings, error) {
 			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
 			continue
 		}
-		if section != "prompts" {
-			return prompts, fmt.Errorf("line %d: expected [prompts] section", lineNo)
-		}
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			return prompts, fmt.Errorf("line %d: expected key = value", lineNo)
 		}
-		parsed, err := strconv.Unquote(strings.TrimSpace(value))
-		if err != nil {
-			return prompts, fmt.Errorf("line %d: %w", lineNo, err)
-		}
-		switch strings.TrimSpace(key) {
-		case "default_system":
-			prompts.DefaultSystem = parsed
-		case "vision_system_suffix":
-			prompts.VisionSystemSuffix = parsed
-		case "vision_fallback_brief":
-			prompts.VisionFallbackBrief = parsed
-		case "vision_fallback_subject":
-			prompts.VisionFallbackSubject = parsed
-		case "vision_metadata_system":
-			prompts.VisionMetadataSystem = parsed
-		case "vision_metadata_user":
-			prompts.VisionMetadataUser = parsed
-		case "vision_answer_system":
-			prompts.VisionAnswerSystem = parsed
-		case "vision_answer_user_prefix":
-			prompts.VisionAnswerUserPrefix = parsed
-		case "image_tool_system_suffix":
-			prompts.ImageToolSystemSuffix = parsed
-		case "image_context_rewrite_system":
-			prompts.ImageContextRewriteSystem = parsed
-		case "image_context_rewrite_user":
-			prompts.ImageContextRewriteUser = parsed
-		case "secondsight_classification_prompt":
-			prompts.SecondSightClassification = parsed
-		case "secondsight_image_prompt_template":
-			prompts.SecondSightImageTemplate = parsed
-		case "hidden_image_memory_template":
-			prompts.HiddenImageMemoryTemplate = parsed
+		switch section {
+		case "prompts":
+			parsed, err := strconv.Unquote(strings.TrimSpace(value))
+			if err != nil {
+				return prompts, fmt.Errorf("line %d: %w", lineNo, err)
+			}
+			switch strings.TrimSpace(key) {
+			case "default_system":
+				prompts.DefaultSystem = parsed
+			case "vision_system_suffix":
+				prompts.VisionSystemSuffix = parsed
+			case "vision_fallback_brief":
+				prompts.VisionFallbackBrief = parsed
+			case "vision_fallback_subject":
+				prompts.VisionFallbackSubject = parsed
+			case "vision_metadata_system":
+				prompts.VisionMetadataSystem = parsed
+			case "vision_metadata_user":
+				prompts.VisionMetadataUser = parsed
+			case "vision_answer_system":
+				prompts.VisionAnswerSystem = parsed
+			case "vision_answer_user_prefix":
+				prompts.VisionAnswerUserPrefix = parsed
+			case "image_tool_system_suffix":
+				prompts.ImageToolSystemSuffix = parsed
+			case "image_context_rewrite_system":
+				prompts.ImageContextRewriteSystem = parsed
+			case "image_context_rewrite_user":
+				prompts.ImageContextRewriteUser = parsed
+			case "secondsight_classification_prompt":
+				prompts.SecondSightClassification = parsed
+			case "secondsight_image_prompt_template":
+				prompts.SecondSightImageTemplate = parsed
+			case "hidden_image_memory_template":
+				prompts.HiddenImageMemoryTemplate = parsed
+			default:
+				return prompts, fmt.Errorf("line %d: unknown prompt key %q", lineNo, strings.TrimSpace(key))
+			}
+		case "image.krea":
+			key := strings.TrimSpace(key)
+			switch key {
+			case "cfg":
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil {
+					return prompts, fmt.Errorf("line %d: %w", lineNo, err)
+				}
+				prompts.KreaCFG = parsed
+			case "rebalance_multiplier":
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil {
+					return prompts, fmt.Errorf("line %d: %w", lineNo, err)
+				}
+				prompts.KreaRebalanceMultiplier = parsed
+			case "negative_prompt":
+				parsed, err := strconv.Unquote(strings.TrimSpace(value))
+				if err != nil {
+					return prompts, fmt.Errorf("line %d: %w", lineNo, err)
+				}
+				prompts.KreaNegativePrompt = parsed
+			default:
+				return prompts, fmt.Errorf("line %d: unknown Krea image key %q", lineNo, key)
+			}
 		default:
-			return prompts, fmt.Errorf("line %d: unknown prompt key %q", lineNo, strings.TrimSpace(key))
+			return prompts, fmt.Errorf("line %d: expected [prompts] or [image.krea] section", lineNo)
 		}
 	}
 	return prompts, scanner.Err()
@@ -2777,7 +2839,18 @@ func formatPromptSettings(prompts promptSettings) string {
 	writePromptString(&b, "secondsight_classification_prompt", prompts.SecondSightClassification)
 	writePromptString(&b, "secondsight_image_prompt_template", prompts.SecondSightImageTemplate)
 	writePromptString(&b, "hidden_image_memory_template", prompts.HiddenImageMemoryTemplate)
+	b.WriteString("\n\n[image.krea]\n")
+	writePromptFloat(&b, "cfg", prompts.KreaCFG)
+	writePromptFloat(&b, "rebalance_multiplier", prompts.KreaRebalanceMultiplier)
+	writePromptString(&b, "negative_prompt", prompts.KreaNegativePrompt)
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func writePromptFloat(b *strings.Builder, key string, value float64) {
+	b.WriteString(key)
+	b.WriteString(" = ")
+	b.WriteString(strconv.FormatFloat(value, 'f', -1, 64))
+	b.WriteByte('\n')
 }
 
 func writePromptString(b *strings.Builder, key, value string) {
