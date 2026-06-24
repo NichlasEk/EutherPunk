@@ -117,7 +117,7 @@ func Default() Config {
 			ComfyUIURL:      "http://192.168.32.88:8188",
 			ModelControlURL: "http://192.168.32.88:8190/model",
 			Directory:       "var/images",
-			TimeoutSeconds:  180,
+			TimeoutSeconds:  720,
 			DefaultWidth:    1024,
 			DefaultHeight:   1024,
 			DefaultSteps:    8,

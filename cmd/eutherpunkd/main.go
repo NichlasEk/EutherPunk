@@ -301,6 +301,7 @@ type comfyHistoryEntry struct {
 	Status struct {
 		StatusStr string `json:"status_str"`
 		Completed bool   `json:"completed"`
+		Messages  []any  `json:"messages"`
 	} `json:"status"`
 }
 
@@ -2011,10 +2012,10 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	}
 	timeout := time.Duration(image.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
-		timeout = 15 * time.Minute
+		timeout = 12 * time.Minute
 	}
-	if timeout < 15*time.Minute {
-		timeout = 15 * time.Minute
+	if timeout < 12*time.Minute {
+		timeout = 12 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -2586,8 +2587,8 @@ func waitForComfyImage(ctx context.Context, baseURL, promptID string) (comfyHist
 			if !ok {
 				continue
 			}
-			if entry.Status.Completed && entry.Status.StatusStr != "success" {
-				return comfyHistoryImage{}, fmt.Errorf("ComfyUI job finished with status %q", entry.Status.StatusStr)
+			if entry.Status.StatusStr != "" && entry.Status.StatusStr != "success" {
+				return comfyHistoryImage{}, fmt.Errorf("ComfyUI job finished with status %q: %s", entry.Status.StatusStr, comfyHistoryErrorMessage(entry))
 			}
 			for _, output := range entry.Outputs {
 				if len(output.Images) > 0 {
@@ -2596,6 +2597,28 @@ func waitForComfyImage(ctx context.Context, baseURL, promptID string) (comfyHist
 			}
 		}
 	}
+}
+
+func comfyHistoryErrorMessage(entry comfyHistoryEntry) string {
+	for _, rawMessage := range entry.Status.Messages {
+		message, ok := rawMessage.([]any)
+		if !ok || len(message) < 2 || message[0] != "execution_error" {
+			continue
+		}
+		details, ok := message[1].(map[string]any)
+		if !ok {
+			continue
+		}
+		if nodeType, _ := details["node_type"].(string); nodeType != "" {
+			if exception, _ := details["exception_message"].(string); strings.TrimSpace(exception) != "" {
+				return fmt.Sprintf("%s: %s", nodeType, strings.TrimSpace(exception))
+			}
+		}
+		if exception, _ := details["exception_message"].(string); strings.TrimSpace(exception) != "" {
+			return strings.TrimSpace(exception)
+		}
+	}
+	return "missing ComfyUI error details"
 }
 
 func fetchComfyImage(ctx context.Context, baseURL string, image comfyHistoryImage) ([]byte, error) {
