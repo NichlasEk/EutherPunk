@@ -27,9 +27,9 @@ for chat/vision context and a larger 1024px `source_image` for SenseNova edit.
 Do not reuse the 256px vision image for editing; it is too small for preserving
 the original scene.
 
-Any request with `source_image` is forced to `sensenova-u1-8b`. Z-Image Turbo is
-text-to-image only and must not receive edit jobs because it will ignore the
-uploaded source image.
+Any request with `source_image` is forced to `sensenova-u1-8b`. Z-Image Turbo
+and Krea 2 Turbo are text-to-image only and must not receive edit jobs because
+they will ignore the uploaded source image.
 
 ## Hosts And Ports
 
@@ -158,6 +158,48 @@ If the node rejects the workflow, verify node registration after a ComfyUI resta
 ```sh
 curl -fsS http://192.168.32.88:8188/object_info/SenseNova_SM_Model
 curl -fsS http://192.168.32.88:8188/object_info/SenseNova_SM_Sampler
+```
+
+## Krea 2 Turbo Assets
+
+Krea 2 Turbo is selectable per user in the same image-model setting as Z-Image
+and SenseNova. It is a text-to-image profile.
+
+Available EutherPunk profile:
+
+- `krea-2-turbo`: uses the isolated Krea 2 Turbo ComfyUI profile and the saved
+  Krea rebalance workflow.
+
+The local selector accepts the same aliases as the launcher:
+
+- `krea`
+- `krea2`
+- `krea-2`
+- `krea2-turbo`
+- `krea-2-turbo`
+
+Required model files:
+
+- `/home/nichlas/ai/comfy-profiles/krea-2-turbo/models/diffusion_models/Krea-2-Turbo/krea2_turbo_fp8_scaled.safetensors`
+- `/home/nichlas/ai/comfy-profiles/krea-2-turbo/models/text_encoders/Krea-2/qwen3vl_4b_fp8_scaled.safetensors`
+- `/home/nichlas/ai/comfy-profiles/krea-2-turbo/models/vae/Krea-2/qwen_image_vae.safetensors`
+
+The EutherPunk workflow uses these ComfyUI node classes:
+
+- `UNETLoader`
+- `CLIPLoader` with type `krea2`
+- `VAELoader`
+- `CLIPTextEncode`
+- `ConditioningKrea2Rebalance`
+- `EmptyLatentImage`
+- `KSampler` with `euler`, `simple`, `cfg=3.5`
+- `VAEDecode`
+- `SaveImage`
+
+Verify node registration after selecting the Krea profile:
+
+```sh
+curl -fsS http://192.168.32.88:8188/object_info/ConditioningKrea2Rebalance
 ```
 
 ## EutherPunk Config

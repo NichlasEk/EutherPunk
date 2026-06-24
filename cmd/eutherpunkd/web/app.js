@@ -56,6 +56,7 @@ let userSettings = {
 };
 let imageModels = [
   { id: "z-image-turbo", label: "Z-Image Turbo" },
+  { id: "krea-2-turbo", label: "Krea 2 Turbo" },
   { id: "sensenova-u1-8b-fast", label: "SenseNova U1 8B snabb" },
   { id: "sensenova-u1-8b", label: "SenseNova U1 8B" },
 ];

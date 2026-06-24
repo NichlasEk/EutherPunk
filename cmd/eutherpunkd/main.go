@@ -39,6 +39,9 @@ const (
 	maxComfySeed           = 1<<31 - 1
 	senseNovaGGUF          = "SenseNova-U1-8B-MoT-8step-Q4_K_S.gguf"
 	senseNovaLoRA          = "SenseNova-U1-8B-MoT-LoRA-8step-V1.0.safetensors"
+	krea2TurboModel        = "Krea-2-Turbo/krea2_turbo_fp8_scaled.safetensors"
+	krea2TextEncoder       = "Krea-2/qwen3vl_4b_fp8_scaled.safetensors"
+	krea2VAE               = "Krea-2/qwen_image_vae.safetensors"
 )
 
 //go:embed web/*
@@ -457,6 +460,7 @@ func handleSettingsGet(cfg serverConfig) http.HandlerFunc {
 			"settings": settings,
 			"image_models": []map[string]string{
 				{"id": "z-image-turbo", "label": "Z-Image Turbo"},
+				{"id": "krea-2-turbo", "label": "Krea 2 Turbo"},
 				{"id": "sensenova-u1-8b-fast", "label": senseNovaLabel + " snabb"},
 				{"id": "sensenova-u1-8b", "label": senseNovaLabel},
 			},
@@ -1452,6 +1456,13 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 			return
 		}
 	}
+	if isKreaImageModel(imageModel) {
+		setImageJobStatusMessage(jobID, "loading_model", "Laddar Krea 2 Turbo-profilen i ComfyUI.")
+		if err := waitForKreaReady(ctx, cfg.image, 5*time.Minute); err != nil {
+			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+			return
+		}
+	}
 	if prompt := imagePromptFromContext(ctx, cfg, req); prompt != "" {
 		req.Prompt = prompt
 	}
@@ -2018,6 +2029,9 @@ func buildImagePrompt(image config.ImageConfig, req imageRequest) (map[string]an
 	if isSenseNovaImageModel(req.ImageModel) {
 		return buildSenseNovaPrompt(image, req)
 	}
+	if isKreaImageModel(req.ImageModel) {
+		return buildKreaPrompt(image, req)
+	}
 	return buildZImagePrompt(image, req)
 }
 
@@ -2164,6 +2178,58 @@ func waitForSenseNovaReady(ctx context.Context, image config.ImageConfig, lora s
 	}
 }
 
+func ensureKreaReady(ctx context.Context, image config.ImageConfig) error {
+	baseURL := strings.TrimRight(image.ComfyUIURL, "/")
+	if baseURL == "" {
+		return errors.New("image.comfyui_url is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/object_info/ConditioningKrea2Rebalance", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("Krea 2 Turbo ar inte redo: ComfyUI svarar inte: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Krea 2 Turbo ar inte redo: ComfyUI returned %s", resp.Status)
+	}
+	if !bytes.Contains(body, []byte("ConditioningKrea2Rebalance")) {
+		return errors.New("Krea 2 Turbo laddas fortfarande: ConditioningKrea2Rebalance saknas i ComfyUI")
+	}
+	return nil
+}
+
+func waitForKreaReady(ctx context.Context, image config.ImageConfig, timeout time.Duration) error {
+	if timeout <= 0 {
+		return ensureKreaReady(ctx, image)
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		if err := ensureKreaReady(ctx, image); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("Krea 2 Turbo blev inte redo inom %s: %w", timeout.Round(time.Second), lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
 func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
 	width := clampToStep(defaultImageDimension(req.Width, image.DefaultWidth, safeImageDefaultWidth), 16, 1024, 16)
 	height := clampToStep(defaultImageDimension(req.Height, image.DefaultHeight, safeImageDefaultHeight), 16, 1024, 16)
@@ -2227,6 +2293,79 @@ func buildZImagePrompt(image config.ImageConfig, req imageRequest) (map[string]a
 		}),
 		"9": comfyNode("PreviewImage", map[string]any{
 			"images": []any{"8", 0},
+		}),
+	}, nil
+}
+
+func buildKreaPrompt(image config.ImageConfig, req imageRequest) (map[string]any, error) {
+	width := clampToStep(defaultImageDimension(req.Width, image.DefaultWidth, safeImageDefaultWidth), 16, 1024, 16)
+	height := clampToStep(defaultImageDimension(req.Height, image.DefaultHeight, safeImageDefaultHeight), 16, 1024, 16)
+	steps := defaultImageSteps(req.Steps, image.DefaultSteps)
+	if steps < 1 {
+		steps = 1
+	}
+	if steps > 12 {
+		steps = 12
+	}
+	seed := req.Seed
+	if seed == 0 {
+		seed = uint64(time.Now().UnixNano())
+	}
+	negative := strings.TrimSpace(req.NegativePrompt)
+	if negative == "" {
+		negative = "text, watermark, blurry, low quality, distorted hands"
+	}
+
+	return map[string]any{
+		"1": comfyNode("UNETLoader", map[string]any{
+			"unet_name":    krea2TurboModel,
+			"weight_dtype": "default",
+		}),
+		"2": comfyNode("CLIPLoader", map[string]any{
+			"clip_name": krea2TextEncoder,
+			"type":      "krea2",
+			"device":    "default",
+		}),
+		"3": comfyNode("VAELoader", map[string]any{
+			"vae_name": krea2VAE,
+		}),
+		"4": comfyNode("CLIPTextEncode", map[string]any{
+			"text": req.Prompt,
+			"clip": []any{"2", 0},
+		}),
+		"5": comfyNode("ConditioningKrea2Rebalance", map[string]any{
+			"conditioning":      []any{"4", 0},
+			"multiplier":        4,
+			"per_layer_weights": "1.0,1.0,1.0,1.0,1.0,1.0,1.0,2.5,5.0,1.1,4.0,1.0",
+		}),
+		"6": comfyNode("CLIPTextEncode", map[string]any{
+			"text": negative,
+			"clip": []any{"2", 0},
+		}),
+		"7": comfyNode("EmptyLatentImage", map[string]any{
+			"width":      width,
+			"height":     height,
+			"batch_size": 1,
+		}),
+		"8": comfyNode("KSampler", map[string]any{
+			"model":        []any{"1", 0},
+			"positive":     []any{"5", 0},
+			"negative":     []any{"6", 0},
+			"latent_image": []any{"7", 0},
+			"seed":         int(seed % maxComfySeed),
+			"steps":        steps,
+			"cfg":          3.5,
+			"sampler_name": "euler",
+			"scheduler":    "simple",
+			"denoise":      1,
+		}),
+		"9": comfyNode("VAEDecode", map[string]any{
+			"samples": []any{"8", 0},
+			"vae":     []any{"3", 0},
+		}),
+		"10": comfyNode("SaveImage", map[string]any{
+			"images":          []any{"9", 0},
+			"filename_prefix": "EutherPunk_Krea_2_Turbo",
 		}),
 	}, nil
 }
@@ -2698,6 +2837,8 @@ func normalizeImageModel(value string) string {
 	switch strings.TrimSpace(value) {
 	case "", "z-image", "z-image-turbo":
 		return "z-image-turbo"
+	case "krea", "krea2", "krea-2", "krea2-turbo", "krea-2-turbo":
+		return "krea-2-turbo"
 	case "sensenova", "sensenova-u1", "sensenova-u1-8b":
 		return "sensenova-u1-8b"
 	case "sensenova-fast", "sensenova-u1-fast", "sensenova-u1-8b-fast":
@@ -2721,6 +2862,10 @@ func isSenseNovaImageModel(value string) bool {
 	default:
 		return false
 	}
+}
+
+func isKreaImageModel(value string) bool {
+	return normalizeImageModel(value) == "krea-2-turbo"
 }
 
 func normalizeLora(value string) string {
