@@ -8,7 +8,6 @@ const promptEl = document.querySelector("#prompt");
 const imagePreviewEl = document.querySelector("#imagePreview");
 const imageButton = document.querySelector("#imageButton");
 const imageInput = document.querySelector("#imageInput");
-const promptAdminChatButton = document.querySelector("#promptAdminChatButton");
 const micButton = document.querySelector("#micButton");
 const voiceToggle = document.querySelector("#voiceToggle");
 const serverVoiceToggle = document.querySelector("#serverVoiceToggle");
@@ -1279,9 +1278,6 @@ async function openPromptAdmin() {
 }
 
 promptAdminButton.addEventListener("click", openPromptAdmin);
-if (promptAdminChatButton) {
-  promptAdminChatButton.addEventListener("click", openPromptAdmin);
-}
 
 promptAdminCloseButton.addEventListener("click", () => {
   promptAdminDialog.close();
