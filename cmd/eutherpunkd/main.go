@@ -1693,9 +1693,13 @@ func syncImageModelControl(ctx context.Context, image config.ImageConfig, model 
 	if endpoint == "" {
 		return nil
 	}
+	model = normalizeImageModel(model)
+	if selected, ok := currentImageModelControl(ctx, endpoint); ok && selected == model {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	body := fmt.Sprintf("model = %q\n", normalizeImageModel(model))
+	body := fmt.Sprintf("model = %q\n", model)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
 	if err != nil {
 		return err
@@ -1711,6 +1715,31 @@ func syncImageModelControl(ctx context.Context, image config.ImageConfig, model 
 		return fmt.Errorf("image model control returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
 	}
 	return nil
+}
+
+func currentImageModelControl(ctx context.Context, endpoint string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", false
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", false
+	}
+	model := normalizeImageModel(payload.Model)
+	return model, model != ""
 }
 
 func unloadOllamaModel(ctx context.Context, ollamaURL, model string) error {
