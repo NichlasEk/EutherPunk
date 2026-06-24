@@ -1486,7 +1486,9 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 	}
 	setImageJobStatus(jobID, "running", imageResponse{}, "")
 	log.Printf("image job %s using model=%s prompt=%q", jobID, imageModel, req.Prompt)
-	out, err := generateWithComfyUI(ctx, cfg.image, user, req)
+	out, err := generateWithComfyUI(ctx, cfg.image, user, req, func(status, message string) {
+		setImageJobStatusMessage(jobID, status, message)
+	})
 	if err != nil {
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
 		return
@@ -1790,7 +1792,8 @@ func unloadOllamaModel(ctx context.Context, ollamaURL, model string) error {
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return err
 	}
@@ -1999,7 +2002,7 @@ func isEmptyVisionAnswer(answer string) bool {
 	return false
 }
 
-func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user string, req imageRequest) (imageResponse, error) {
+func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user string, req imageRequest, updateStatus func(status, message string)) (imageResponse, error) {
 	var out imageResponse
 	req.ImageModel = effectiveImageModel(req.ImageModel, req.SourceImage)
 	baseURL := strings.TrimRight(image.ComfyUIURL, "/")
@@ -2017,6 +2020,9 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	defer cancel()
 
 	if isSenseNovaImageModel(req.ImageModel) && strings.TrimSpace(req.SourceImage) != "" {
+		if updateStatus != nil {
+			updateStatus("uploading_source", "Skickar originalbilden till ComfyUI.")
+		}
 		uploadedName, err := uploadComfySourceImage(ctx, baseURL, req.SourceImage)
 		if err != nil {
 			return out, err
@@ -2024,6 +2030,9 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 		req.SourceImage = uploadedName
 	}
 
+	if updateStatus != nil {
+		updateStatus("building_workflow", "Bygger ComfyUI-workflow.")
+	}
 	prompt, err := buildImagePrompt(image, req)
 	if err != nil {
 		return out, err
@@ -2032,12 +2041,16 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 	if err != nil {
 		return out, err
 	}
+	if updateStatus != nil {
+		updateStatus("submitting", "Skickar workflow till ComfyUI.")
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/prompt", bytes.NewReader(raw))
 	if err != nil {
 		return out, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return out, err
 	}
@@ -2060,9 +2073,15 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 		return out, fmt.Errorf("ComfyUI rejected workflow: %v", queued.NodeErrors)
 	}
 
+	if updateStatus != nil {
+		updateStatus("waiting_comfy", "Vantar pa ComfyUI-rendering.")
+	}
 	imageInfo, err := waitForComfyImage(ctx, baseURL, queued.PromptID)
 	if err != nil {
 		return out, err
+	}
+	if updateStatus != nil {
+		updateStatus("fetching_image", "Hamtar fardig bild fran ComfyUI.")
 	}
 	data, err := fetchComfyImage(ctx, baseURL, imageInfo)
 	if err != nil {
@@ -2129,7 +2148,8 @@ func uploadComfySourceImage(ctx context.Context, baseURL, source string) (string
 		return "", err
 	}
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", err
 	}
