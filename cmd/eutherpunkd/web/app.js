@@ -998,7 +998,7 @@ form.addEventListener("submit", async (event) => {
         skipContext: true,
       });
     } else if (images.length === 0 && imageRequest) {
-      await generateImage(imageRequest.prompt, imageRequest.displayText);
+      await generateImage(imageRequest.prompt, imageRequest.displayText, { skipContext: true });
     } else if (images.length > 0 && imageRequest) {
       await sendPrompt(prompt, images);
       await generateImage(imageRequest.prompt, prompt, { addUserMessage: false, sourceImage: images[0] || null });

@@ -222,6 +222,8 @@ type imageResponse struct {
 	Type      string `json:"type"`
 	User      string `json:"user"`
 	URL       string `json:"url"`
+	Model     string `json:"model,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
 }
 
 type imageJob struct {
@@ -1475,6 +1477,7 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 		}
 	}
 	setImageJobStatus(jobID, "running", imageResponse{}, "")
+	log.Printf("image job %s using model=%s prompt=%q", jobID, imageModel, req.Prompt)
 	out, err := generateWithComfyUI(ctx, cfg.image, user, req)
 	if err != nil {
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
@@ -2022,6 +2025,8 @@ func generateWithComfyUI(ctx context.Context, image config.ImageConfig, user str
 		Type:      imageInfo.Type,
 		User:      user,
 		URL:       "/api/eutherpunk/images/" + url.PathEscape(user) + "/" + url.PathEscape(storedName),
+		Model:     normalizeImageModel(req.ImageModel),
+		Prompt:    req.Prompt,
 	}, nil
 }
 
