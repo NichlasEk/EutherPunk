@@ -24,6 +24,7 @@ const promptAdminSaveButton = document.querySelector("#promptAdminSaveButton");
 const promptAdminText = document.querySelector("#promptAdminText");
 const promptAdminPath = document.querySelector("#promptAdminPath");
 const chatModelInput = document.querySelector("#chatModelInput");
+const chatModelOptions = document.querySelector("#chatModelOptions");
 const visionModelInput = document.querySelector("#visionModelInput");
 const imageModelSelect = document.querySelector("#imageModelSelect");
 const imageLoraSelect = document.querySelector("#imageLoraSelect");
@@ -61,6 +62,7 @@ let imageModels = [
   { id: "sensenova-u1-8b", label: "SenseNova U1 8B" },
 ];
 let imageLoras = ["none"];
+let chatModels = ["qwen3-coder:30b", "supergemma4-26b-free:latest"];
 let promptSettings = {
   secondsight_classification_prompt:
     "Look at the attached image and identify the main visible subject in 1-5 words. Prefer concrete nouns like bear, fox, person, empty yard, car, bird, forest path. If uncertain, say what it most resembles. Return only the label.",
@@ -112,6 +114,45 @@ async function loadSettings() {
   renderSettingsForm();
 }
 
+async function loadChatModels() {
+  const response = await fetch("/api/eutherpunk/models");
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const payload = await response.json();
+  const modelNames = (payload.models || [])
+    .map((model) => model.name || model.model)
+    .filter(Boolean);
+  chatModels = uniqueValues([...modelNames, "supergemma4-26b-free:latest", userSettings.chat_model]);
+  renderChatModelOptions();
+}
+
+function uniqueValues(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const trimmed = String(value || "").trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function renderChatModelOptions() {
+  if (!chatModelOptions) {
+    return;
+  }
+  chatModelOptions.replaceChildren();
+  for (const model of chatModels) {
+    const option = document.createElement("option");
+    option.value = model;
+    chatModelOptions.appendChild(option);
+  }
+}
+
 async function loadPromptAdmin() {
   const response = await fetch("/api/eutherpunk/admin/prompts");
   const payload = await response.json();
@@ -144,6 +185,7 @@ async function savePromptAdmin() {
 
 function renderSettingsForm() {
   chatModelInput.value = userSettings.chat_model || "";
+  renderChatModelOptions();
   visionModelInput.value = userSettings.vision_model || "";
   voiceBackendInput.value = userSettings.voice_backend || "";
   renderOptions(imageModelSelect, imageModels.map((model) => [model.id, model.label]), userSettings.image_model);
@@ -1252,7 +1294,12 @@ serverVoiceToggle.addEventListener("click", async () => {
   }
 });
 
-settingsButton.addEventListener("click", () => {
+settingsButton.addEventListener("click", async () => {
+  try {
+    await loadChatModels();
+  } catch (error) {
+    addMessage("assistant", `Kunde inte ladda modellista: ${error.message}`);
+  }
   renderSettingsForm();
   settingsDialog.showModal();
 });
@@ -1352,6 +1399,9 @@ setupSpeechRecognition();
 loadStatus();
 loadSettings().catch((error) => {
   statusEl.textContent = `Settings offline: ${error.message}`;
+});
+loadChatModels().catch(() => {
+  renderChatModelOptions();
 });
 loadPromptAdmin().catch(() => {});
 loadConversationList().catch((error) => {
