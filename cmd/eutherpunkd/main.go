@@ -288,6 +288,13 @@ type comfyPromptResponse struct {
 	NodeErrors map[string]any `json:"node_errors"`
 }
 
+type gpuSchedulerJob struct {
+	ID       string  `json:"id"`
+	Status   string  `json:"status"`
+	Message  string  `json:"message"`
+	Progress float64 `json:"progress"`
+}
+
 type comfyHistoryImage struct {
 	Filename  string `json:"filename"`
 	Subfolder string `json:"subfolder"`
@@ -1485,12 +1492,42 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 			return
 		}
 	}
+	gpuJob, err := acquireImageGPUJob(ctx, cfg, user, jobID, imageModel, func(status, message string) {
+		setImageJobStatusMessage(jobID, status, message)
+	})
+	if err != nil {
+		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
+		return
+	}
+	gpuReleaseStatus := "done"
+	if gpuJob != nil {
+		heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatCtx.Done():
+					return
+				case <-ticker.C:
+					heartbeatImageGPUJob(heartbeatCtx, cfg, gpuJob.ID, "image rendering", 0)
+				}
+			}
+		}()
+		defer func() {
+			if err := releaseImageGPUJob(context.Background(), cfg, gpuJob.ID, gpuReleaseStatus); err != nil {
+				log.Printf("image GPU scheduler release failed for job %s: %v", jobID, err)
+			}
+		}()
+		defer stopHeartbeat()
+	}
 	setImageJobStatus(jobID, "running", imageResponse{}, "")
 	log.Printf("image job %s using model=%s prompt=%q", jobID, imageModel, req.Prompt)
 	out, err := generateWithComfyUI(ctx, cfg.image, user, req, func(status, message string) {
 		setImageJobStatusMessage(jobID, status, message)
 	})
 	if err != nil {
+		gpuReleaseStatus = "failed"
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
 		return
 	}
@@ -1673,6 +1710,138 @@ func waitForVoiceResourcesForImage(ctx context.Context, cfg serverConfig) error 
 		}
 	}
 	return nil
+}
+
+func acquireImageGPUJob(ctx context.Context, cfg serverConfig, user, jobID, imageModel string, updateStatus func(status, message string)) (*gpuSchedulerJob, error) {
+	baseURL := strings.TrimRight(cfg.voice.EutherLinkURL, "/")
+	if baseURL == "" {
+		return nil, nil
+	}
+	if updateStatus != nil {
+		updateStatus("waiting_gpu", "Vantar pa global GPU-ko.")
+	}
+	payload := map[string]any{
+		"owner":       "eutherpunk",
+		"owner_id":    jobID,
+		"label":       "EutherPunk image " + imageModel,
+		"kind":        "image",
+		"priority":    50,
+		"ttl_seconds": 7200,
+		"metadata": map[string]any{
+			"user":  user,
+			"model": imageModel,
+		},
+	}
+	job, status, err := gpuSchedulerRequest(ctx, http.MethodPost, baseURL+"/v1/gpu/jobs", payload)
+	if err != nil {
+		if status == http.StatusNotFound {
+			log.Printf("GPU scheduler is not available at %s; continuing without global image lease", baseURL)
+			return nil, nil
+		}
+		return nil, err
+	}
+	if job.ID == "" {
+		return nil, fmt.Errorf("GPU scheduler response missing job id")
+	}
+
+	deadline := time.Now().Add(45 * time.Minute)
+	for job.Status == "queued" {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("global GPU-ko tog for lang tid for bildjobbet")
+		}
+		if updateStatus != nil {
+			updateStatus("waiting_gpu", "Vantar pa global GPU-ko.")
+		}
+		if !sleepContext(ctx, 2*time.Second) {
+			return nil, ctx.Err()
+		}
+		job, status, err = gpuSchedulerRequest(ctx, http.MethodGet, baseURL+"/v1/gpu/jobs/"+url.PathEscape(job.ID), nil)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusNotFound {
+			return nil, fmt.Errorf("global GPU-jobb saknas i schedulern")
+		}
+	}
+	if job.Status != "running" {
+		return nil, fmt.Errorf("global GPU-jobb fick status %q: %s", job.Status, job.Message)
+	}
+	if updateStatus != nil {
+		updateStatus("waiting_gpu", "Global GPU-slot klar.")
+	}
+	return &job, nil
+}
+
+func releaseImageGPUJob(ctx context.Context, cfg serverConfig, schedulerJobID, status string) error {
+	baseURL := strings.TrimRight(cfg.voice.EutherLinkURL, "/")
+	if baseURL == "" || schedulerJobID == "" {
+		return nil
+	}
+	endpoint := "release"
+	message := "done"
+	if status == "failed" || status == "cancelled" {
+		endpoint = "cancel"
+		message = status
+	}
+	_, _, err := gpuSchedulerRequest(ctx, http.MethodPost, baseURL+"/v1/gpu/jobs/"+url.PathEscape(schedulerJobID)+"/"+endpoint, map[string]any{
+		"message":     message,
+		"ttl_seconds": 7200,
+	})
+	return err
+}
+
+func heartbeatImageGPUJob(ctx context.Context, cfg serverConfig, schedulerJobID, message string, progress float64) {
+	baseURL := strings.TrimRight(cfg.voice.EutherLinkURL, "/")
+	if baseURL == "" || schedulerJobID == "" {
+		return
+	}
+	_, _, err := gpuSchedulerRequest(ctx, http.MethodPost, baseURL+"/v1/gpu/jobs/"+url.PathEscape(schedulerJobID)+"/heartbeat", map[string]any{
+		"message":     message,
+		"progress":    progress,
+		"ttl_seconds": 7200,
+	})
+	if err != nil {
+		log.Printf("image GPU scheduler heartbeat failed for %s: %v", schedulerJobID, err)
+	}
+}
+
+func gpuSchedulerRequest(ctx context.Context, method, endpoint string, payload any) (gpuSchedulerJob, int, error) {
+	var job gpuSchedulerJob
+	var body io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return job, 0, err
+		}
+		body = bytes.NewReader(raw)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return job, 0, err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return job, 0, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return job, resp.StatusCode, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return job, resp.StatusCode, fmt.Errorf("GPU scheduler returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &job); err != nil {
+			return job, resp.StatusCode, err
+		}
+	}
+	return job, resp.StatusCode, nil
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) bool {
