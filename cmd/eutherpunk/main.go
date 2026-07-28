@@ -340,7 +340,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		}
 
 		history = append(history, chatMessage{Role: "user", Content: prompt})
-		fmt.Print("eutherpunk> ")
+		fmt.Println("eutherpunk> arbetar… (Esc Esc avbryter)")
 		var answer string
 		var err error
 		if cfg.workspace.Root != "" {

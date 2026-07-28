@@ -42,7 +42,10 @@ func startDoubleEscapeWatcher(
 	interrupted := &atomic.Bool{}
 	go func() {
 		defer close(done)
-		defer term.Restore(fd, oldState)
+		defer func() {
+			drainPendingConsoleInput(handle)
+			_ = term.Restore(fd, oldState)
+		}()
 
 		detector := doubleEscapeDetector{}
 		ticker := time.NewTicker(50 * time.Millisecond)
@@ -92,4 +95,28 @@ func startDoubleEscapeWatcher(
 	}()
 
 	return &agentInterruptWatcher{done: done, interrupted: interrupted}, nil
+}
+
+func drainPendingConsoleInput(handle windows.Handle) {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		var events uint32
+		if windows.GetNumberOfConsoleInputEvents(handle, &events) != nil || events == 0 {
+			return
+		}
+		for events > 0 {
+			var record [20]byte
+			var read uint32
+			ok, _, _ := readConsoleInputW.Call(
+				uintptr(handle),
+				uintptr(unsafe.Pointer(&record[0])),
+				1,
+				uintptr(unsafe.Pointer(&read)),
+			)
+			if ok == 0 || read == 0 {
+				return
+			}
+			events--
+		}
+	}
 }

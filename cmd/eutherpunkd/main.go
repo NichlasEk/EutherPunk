@@ -272,21 +272,25 @@ type ollamaChatRequest struct {
 	Model     string          `json:"model"`
 	Stream    bool            `json:"stream"`
 	Messages  []ollamaMessage `json:"messages"`
+	Think     *bool           `json:"think,omitempty"`
 	Options   map[string]any  `json:"options,omitempty"`
 	KeepAlive any             `json:"keep_alive,omitempty"`
 	Format    any             `json:"format,omitempty"`
 }
 
 type ollamaMessage struct {
-	Role    string   `json:"role"`
-	Content string   `json:"content"`
-	Images  []string `json:"images,omitempty"`
+	Role     string   `json:"role"`
+	Content  string   `json:"content"`
+	Thinking string   `json:"thinking,omitempty"`
+	Images   []string `json:"images,omitempty"`
 }
 
 type ollamaChatResponse struct {
-	Message ollamaMessage `json:"message"`
-	Done    bool          `json:"done,omitempty"`
-	Error   string        `json:"error,omitempty"`
+	Message    ollamaMessage `json:"message"`
+	Done       bool          `json:"done,omitempty"`
+	DoneReason string        `json:"done_reason,omitempty"`
+	EvalCount  int           `json:"eval_count,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 type eutherLinkJob struct {
@@ -2137,10 +2141,12 @@ en tom lista och message kort förklara varför.`
 		},
 		"required": []string{"message", "files"},
 	}
+	think := false
 	payload := ollamaChatRequest{
 		Model:    model,
 		Stream:   false,
 		Messages: append([]ollamaMessage{{Role: "system", Content: system}}, messages...),
+		Think:    &think,
 		Format:   format,
 		Options: map[string]any{
 			"num_ctx":     ollamaNumCtx,
@@ -2176,6 +2182,15 @@ en tom lista och message kort förklara varför.`
 	if out.Error != "" {
 		return "", nil, errors.New(out.Error)
 	}
+	if strings.TrimSpace(out.Message.Content) == "" {
+		log.Printf(
+			"workspace model returned empty content: done_reason=%q eval_count=%d thinking_bytes=%d",
+			out.DoneReason,
+			out.EvalCount,
+			len(out.Message.Thinking),
+		)
+		return "Modellen använde inget av svaret till ett färdigt filförslag. Inga filer ändrades; försök igen.", nil, nil
+	}
 	var workspace struct {
 		Message string                  `json:"message"`
 		Files   []workspaceResponseFile `json:"files"`
@@ -2183,7 +2198,14 @@ en tom lista och message kort förklara varför.`
 	decoder := json.NewDecoder(strings.NewReader(out.Message.Content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&workspace); err != nil {
-		return "", nil, fmt.Errorf("decode workspace model response: %w", err)
+		log.Printf(
+			"workspace model returned invalid JSON: done_reason=%q eval_count=%d content_bytes=%d: %v",
+			out.DoneReason,
+			out.EvalCount,
+			len(out.Message.Content),
+			err,
+		)
+		return "Modellen gav inget giltigt filförslag. Inga filer ändrades; försök igen.", nil, nil
 	}
 	if len(workspace.Files) > 16 {
 		return "", nil, errors.New("workspace model proposed too many files")

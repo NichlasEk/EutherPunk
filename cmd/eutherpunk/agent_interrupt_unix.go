@@ -32,7 +32,10 @@ func startDoubleEscapeWatcher(
 	interrupted := &atomic.Bool{}
 	go func() {
 		defer close(done)
-		defer term.Restore(fd, oldState)
+		defer func() {
+			drainPendingTerminalInput(fd)
+			_ = term.Restore(fd, oldState)
+		}()
 
 		detector := doubleEscapeDetector{}
 		buffer := make([]byte, 16)
@@ -78,4 +81,19 @@ func startDoubleEscapeWatcher(
 	}()
 
 	return &agentInterruptWatcher{done: done, interrupted: interrupted}, nil
+}
+
+func drainPendingTerminalInput(fd int) {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	buffer := make([]byte, 64)
+	for time.Now().Before(deadline) {
+		pollFD := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		ready, err := unix.Poll(pollFD, 50)
+		if err != nil || ready == 0 {
+			return
+		}
+		if _, err := unix.Read(fd, buffer); err != nil {
+			return
+		}
+	}
 }

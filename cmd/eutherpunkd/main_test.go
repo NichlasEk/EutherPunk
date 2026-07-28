@@ -22,6 +22,9 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 		if request.Options["num_ctx"] != float64(ollamaNumCtx) {
 			t.Fatalf("num_ctx = %#v", request.Options["num_ctx"])
 		}
+		if request.Think == nil || *request.Think {
+			t.Fatalf("workspace thinking must be disabled: %#v", request.Think)
+		}
 		if len(request.Messages) == 0 ||
 			!strings.Contains(request.Messages[0].Content, "Kontrollera särskilt att varje") {
 			t.Fatalf("workspace system prompt saknar slutkontroll: %#v", request.Messages)
@@ -48,6 +51,32 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if message != "klart" || len(files) != 1 || files[0].Path != "main.lua" {
+		t.Fatalf("message=%q, files=%#v", message, files)
+	}
+}
+
+func TestAskWorkspaceOllamaHandlesEmptyThinkingResponseWithoutGatewayError(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+			Message:    ollamaMessage{Role: "assistant", Thinking: "unfinished reasoning"},
+			Done:       true,
+			DoneReason: "length",
+			EvalCount:  3072,
+		})
+	}))
+	defer ollama.Close()
+
+	message, files, err := askWorkspaceOllama(
+		context.Background(),
+		ollama.URL,
+		"test-model",
+		"system",
+		[]ollamaMessage{{Role: "user", Content: "skapa"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message, "Inga filer ändrades") || len(files) != 0 {
 		t.Fatalf("message=%q, files=%#v", message, files)
 	}
 }
