@@ -32,6 +32,7 @@ import (
 const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfiguration och praktisk felsokning. Svara pa samma sprak som anvandaren; om anvandaren skriver svenska eller spraket ar oklart, svara pa svenska. Var konkret, fraga innan destruktiva atgarder och prioritera sakra forslag."
 
 const ollamaNumCtx = 4096
+const workspaceOllamaNumCtx = 8192
 const maxClientContextBytes = 32 * 1024
 
 const (
@@ -391,6 +392,9 @@ func main() {
 	mux.HandleFunc("DELETE /api/eutherpunk/conversations/{id}", auth.protect("eutherpunk:conversations", false, handleConversationDelete(cfg)))
 	mux.HandleFunc("POST /api/eutherpunk/chat", auth.protect("eutherpunk:chat", false, handleChat(cfg)))
 	mux.HandleFunc("POST /api/eutherpunk/chat/stream", auth.protect("eutherpunk:chat", false, handleChatStream(cfg)))
+	mux.HandleFunc("POST /api/eutherpunk/workspace/jobs", auth.protect("eutherpunk:chat", false, handleWorkspaceJobStart(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/workspace/jobs/{id}", auth.protect("eutherpunk:chat", false, handleWorkspaceJobGet()))
+	mux.HandleFunc("DELETE /api/eutherpunk/workspace/jobs/{id}", auth.protect("eutherpunk:chat", false, handleWorkspaceJobCancel()))
 	mux.HandleFunc("POST /api/eutherpunk/tts", auth.protect("eutherpunk:media", false, handleTTS(cfg)))
 	mux.HandleFunc("POST /api/eutherpunk/images/generate", auth.protect("eutherpunk:media", false, handleImageGenerate(cfg)))
 	mux.HandleFunc("GET /api/eutherpunk/images/jobs/{id}", auth.protect("eutherpunk:media", false, handleImageJobGet()))
@@ -2152,8 +2156,8 @@ lista och message kort förklara varför.`
 		Think:    &think,
 		Format:   format,
 		Options: map[string]any{
-			"num_ctx":     ollamaNumCtx,
-			"num_predict": 3072,
+			"num_ctx":     workspaceOllamaNumCtx,
+			"num_predict": 4096,
 			"temperature": 0.1,
 		},
 	}

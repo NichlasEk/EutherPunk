@@ -10,10 +10,12 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -39,6 +41,15 @@ type workspaceFile struct {
 
 type fileProposal struct {
 	Files []workspaceFile `json:"files"`
+}
+
+type workspaceJobResponse struct {
+	ID      string          `json:"id"`
+	Status  string          `json:"status"`
+	Model   string          `json:"model,omitempty"`
+	Message string          `json:"message,omitempty"`
+	Files   []workspaceFile `json:"files,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }
 
 func offerCurrentDirectoryWorkspace(reader *bufio.Reader, state *workspaceState) error {
@@ -97,7 +108,7 @@ func workspaceChat(
 	answer, err := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
 		var requestErr error
 		var response string
-		response, structuredProposal, requestErr = requestWorkspaceAnswer(ctx, cfg, messages, toolContext)
+		response, structuredProposal, requestErr = requestWorkspaceAnswer(ctx, cfg, messages, toolContext, output)
 		return response, requestErr
 	})
 	if err != nil {
@@ -144,6 +155,7 @@ func requestWorkspaceAnswer(
 	cfg cliConfig,
 	messages []chatMessage,
 	toolContext string,
+	output io.Writer,
 ) (string, fileProposal, error) {
 	clientContext := strings.TrimSpace(cfg.memory.ClientContext())
 	if clientContext != "" {
@@ -159,6 +171,148 @@ func requestWorkspaceAnswer(
 	if err != nil {
 		return "", fileProposal{}, err
 	}
+	job, status, err := requestWorkspaceJob(
+		ctx,
+		cfg,
+		http.MethodPost,
+		cfg.apiURL+"/api/eutherpunk/workspace/jobs",
+		raw,
+	)
+	if err != nil {
+		return "", fileProposal{}, err
+	}
+	if status == http.StatusNotFound {
+		return requestWorkspaceAnswerLegacy(ctx, cfg, raw)
+	}
+	if status != http.StatusAccepted && status != http.StatusOK {
+		return "", fileProposal{}, fmt.Errorf("starta kodjobb: HTTP %d: %s", status, job.Error)
+	}
+	if job.ID == "" {
+		return "", fileProposal{}, errors.New("servern returnerade inget jobb-ID")
+	}
+
+	started := time.Now()
+	nextProgress := 10 * time.Second
+	pollImmediately := true
+	for {
+		switch job.Status {
+		case "completed":
+			return validateWorkspaceJobResult(job)
+		case "failed":
+			if job.Error == "" {
+				job.Error = "okänt serverfel"
+			}
+			return "", fileProposal{}, errors.New(job.Error)
+		case "cancelled":
+			return "", fileProposal{}, errAgentInterrupted
+		case "queued", "running":
+		default:
+			return "", fileProposal{}, fmt.Errorf("okänd kodjobbsstatus %q", job.Status)
+		}
+
+		elapsed := time.Since(started)
+		if elapsed >= nextProgress {
+			_, _ = fmt.Fprintf(output, "Kodjobbet arbetar fortfarande… %ds\r\n", int(elapsed.Round(time.Second).Seconds()))
+			nextProgress += 10 * time.Second
+		}
+		if pollImmediately {
+			pollImmediately = false
+		} else {
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				cancelWorkspaceJob(cfg, job.ID)
+				return "", fileProposal{}, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		job, status, err = requestWorkspaceJob(
+			ctx,
+			cfg,
+			http.MethodGet,
+			cfg.apiURL+"/api/eutherpunk/workspace/jobs/"+url.PathEscape(job.ID),
+			nil,
+		)
+		if err != nil {
+			cancelWorkspaceJob(cfg, job.ID)
+			return "", fileProposal{}, err
+		}
+		if status != http.StatusOK {
+			cancelWorkspaceJob(cfg, job.ID)
+			return "", fileProposal{}, fmt.Errorf("hämta kodjobb: HTTP %d: %s", status, job.Error)
+		}
+	}
+}
+
+func requestWorkspaceJob(
+	ctx context.Context,
+	cfg cliConfig,
+	method, endpoint string,
+	body []byte,
+) (workspaceJobResponse, int, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return workspaceJobResponse{}, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "eutherpunk-cli/"+version)
+	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	if err := cfg.authorize(req); err != nil {
+		return workspaceJobResponse{}, 0, err
+	}
+	resp, err := cliHTTPClient.Do(req)
+	if err != nil {
+		return workspaceJobResponse{}, 0, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxProposalBytes+128*1024))
+	if err != nil {
+		return workspaceJobResponse{}, resp.StatusCode, err
+	}
+	var job workspaceJobResponse
+	if len(strings.TrimSpace(string(responseBody))) > 0 {
+		if err := json.Unmarshal(responseBody, &job); err != nil {
+			return workspaceJobResponse{}, resp.StatusCode, fmt.Errorf("%s: %s", resp.Status, string(responseBody))
+		}
+	}
+	return job, resp.StatusCode, nil
+}
+
+func validateWorkspaceJobResult(job workspaceJobResponse) (string, fileProposal, error) {
+	proposal := fileProposal{Files: job.Files}
+	if len(proposal.Files) > maxProposalFiles {
+		return "", fileProposal{}, errors.New("servern returnerade för många filförslag")
+	}
+	for _, file := range proposal.Files {
+		if err := validateProposedFile(file); err != nil {
+			return "", fileProposal{}, err
+		}
+	}
+	return job.Message, proposal, nil
+}
+
+func cancelWorkspaceJob(cfg cliConfig, id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _, _ = requestWorkspaceJob(
+		ctx,
+		cfg,
+		http.MethodDelete,
+		cfg.apiURL+"/api/eutherpunk/workspace/jobs/"+url.PathEscape(id),
+		nil,
+	)
+}
+
+func requestWorkspaceAnswerLegacy(
+	ctx context.Context,
+	cfg cliConfig,
+	raw []byte,
+) (string, fileProposal, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.apiURL+"/api/eutherpunk/chat", bytes.NewReader(raw))
 	if err != nil {
 		return "", fileProposal{}, err
@@ -188,16 +342,11 @@ func requestWorkspaceAnswer(
 	if response.Error != "" {
 		return "", fileProposal{}, errors.New(response.Error)
 	}
-	proposal := fileProposal{Files: response.Files}
-	if len(proposal.Files) > maxProposalFiles {
-		return "", fileProposal{}, errors.New("servern returnerade för många filförslag")
-	}
-	for _, file := range proposal.Files {
-		if err := validateProposedFile(file); err != nil {
-			return "", fileProposal{}, err
-		}
-	}
-	return response.Message, proposal, nil
+	return validateWorkspaceJobResult(workspaceJobResponse{
+		Status:  "completed",
+		Message: response.Message,
+		Files:   response.Files,
+	})
 }
 
 func handleWorkspaceCommand(state *workspaceState, command string) error {

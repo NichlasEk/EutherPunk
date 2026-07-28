@@ -179,6 +179,18 @@ as `<name>.eutherpunk.previous`. Deletion and arbitrary shell execution are not
 available in this version. This is enough to create and revise small projects;
 the user still runs or builds them separately.
 
+Workspace generation uses an authenticated asynchronous job protocol. Starting
+a job returns immediately; the CLI polls short status requests, prints elapsed
+progress every ten seconds, and sends a server-side cancellation when the user
+presses Escape twice. Completed, failed, cancelled, and expired jobs therefore
+have explicit outcomes instead of depending on one long proxy request.
+
+```text
+POST   /api/eutherpunk/workspace/jobs
+GET    /api/eutherpunk/workspace/jobs/{id}
+DELETE /api/eutherpunk/workspace/jobs/{id}
+```
+
 Long-term memory is opt-in and stored next to the CLI config as `memory.md`.
 `/memory on` creates a human-readable template and a small enable marker, so
 the memory is loaded again at the next start. `/memory off` removes only the

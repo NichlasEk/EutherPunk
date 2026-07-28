@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +93,74 @@ func TestStreamChatSendsConversationHistory(t *testing.T) {
 	}
 	if !strings.Contains(received.ClientContext, "Minns detta.") {
 		t.Fatalf("client context = %q", received.ClientContext)
+	}
+}
+
+func TestRequestWorkspaceAnswerUsesJobLifecycle(t *testing.T) {
+	var starts, polls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization header = %q", got)
+		}
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/api/eutherpunk/workspace/jobs":
+			starts++
+			var request chatRequest
+			if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if !request.LocalWorkspace || !strings.Contains(request.ClientContext, "LOKAL KODARBETSYTA") {
+				t.Fatalf("workspace request = %#v", request)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:     "job-1",
+				Status: "running",
+			})
+		case req.Method == http.MethodGet && req.URL.Path == "/api/eutherpunk/workspace/jobs/job-1":
+			polls++
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:      "job-1",
+				Status:  "completed",
+				Message: "klart",
+				Files: []workspaceFile{{
+					Path:    "main.lua",
+					Content: "print('hej')\n",
+				}},
+			})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	message, proposal, err := requestWorkspaceAnswer(
+		context.Background(),
+		cliConfig{
+			apiURL: server.URL,
+			model:  "test-model",
+			credentials: authCredentials{
+				AccessToken: "test-token",
+				ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+			},
+		},
+		[]chatMessage{{Role: "user", Content: "skapa"}},
+		"LOKAL KODARBETSYTA\n(tom arbetsyta)",
+		&output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starts != 1 || polls != 1 || message != "klart" ||
+		len(proposal.Files) != 1 || proposal.Files[0].Path != "main.lua" {
+		t.Fatalf(
+			"starts=%d polls=%d message=%q proposal=%#v",
+			starts,
+			polls,
+			message,
+			proposal,
+		)
 	}
 }
 
