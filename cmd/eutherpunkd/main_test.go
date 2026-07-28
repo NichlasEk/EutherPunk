@@ -19,7 +19,7 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 		if request.Format == nil {
 			t.Fatal("workspace request did not include a JSON schema")
 		}
-		if request.Options["num_ctx"] != float64(8192) {
+		if request.Options["num_ctx"] != float64(ollamaNumCtx) {
 			t.Fatalf("num_ctx = %#v", request.Options["num_ctx"])
 		}
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{

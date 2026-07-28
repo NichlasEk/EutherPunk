@@ -731,6 +731,9 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			answer, err = askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
 		}
 		if err != nil {
+			if workspaceRequest {
+				log.Printf("workspace model request failed: %v", err)
+			}
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
@@ -2134,8 +2137,8 @@ filer än uppgiften kräver. Om inga filer behövs ska files vara en tom lista.`
 		Messages: append([]ollamaMessage{{Role: "system", Content: system}}, messages...),
 		Format:   format,
 		Options: map[string]any{
-			"num_ctx":     8192,
-			"num_predict": 6144,
+			"num_ctx":     ollamaNumCtx,
+			"num_predict": 3072,
 			"temperature": 0.1,
 		},
 	}
