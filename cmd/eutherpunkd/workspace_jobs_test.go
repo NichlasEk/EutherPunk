@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,16 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 		}
 		if request.Model != "coder-model" {
 			t.Fatalf("workspace model = %q", request.Model)
+		}
+		if workspaceRequestHasProperty(request, "accepted") {
+			_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+				Message: ollamaMessage{
+					Role:    "assistant",
+					Content: `{"accepted":true,"issues":[]}`,
+				},
+				Done: true,
+			})
+			return
 		}
 		close(started)
 		<-release
@@ -103,7 +114,7 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 			if job.Message != "klart" || len(job.Files) != 1 || job.Files[0].Path != "main.lua" {
 				t.Fatalf("completed job = %#v", job)
 			}
-			if len(job.Activities) < 5 ||
+			if len(job.Activities) < 7 ||
 				!strings.Contains(job.Activities[len(job.Activities)-1].Message, "1 fil") {
 				t.Fatalf("completed activities = %#v", job.Activities)
 			}
@@ -111,6 +122,112 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("job did not complete: %#v", job)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func workspaceRequestHasProperty(request ollamaChatRequest, property string) bool {
+	format, ok := request.Format.(map[string]any)
+	if !ok {
+		return false
+	}
+	properties, ok := format["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = properties[property]
+	return ok
+}
+
+func TestWorkspaceJobRepairsRejectedProposal(t *testing.T) {
+	var generationCalls, reviewCalls int
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if workspaceRequestHasProperty(request, "accepted") {
+			reviewCalls++
+			accepted := reviewCalls > 1
+			issues := `["rotation fungerar inte för icke-kvadratiska matriser"]`
+			if accepted {
+				issues = "[]"
+			}
+			_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+				Message: ollamaMessage{
+					Role: "assistant",
+					Content: fmt.Sprintf(
+						`{"accepted":%t,"issues":%s}`,
+						accepted,
+						issues,
+					),
+				},
+				Done: true,
+			})
+			return
+		}
+		generationCalls++
+		content := "const rotation = 'trasig';\n"
+		if generationCalls > 1 {
+			content = "const rotation = 'fungerar';\n"
+		}
+		response := fmt.Sprintf(
+			`{"message":"varv %d","files":[{"path":"game.js","content":%q}]}`,
+			generationCalls,
+			content,
+		)
+		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: response},
+			Done:    true,
+		})
+	}))
+	defer ollama.Close()
+
+	workspaceJobsMu.Lock()
+	workspaceJobs = map[string]*workspaceJob{}
+	workspaceJobsMu.Unlock()
+	cfg := serverConfig{
+		ollamaURL:      ollama.URL,
+		model:          "chat-model",
+		workspaceModel: "coder-model",
+		settingsDir:    t.TempDir(),
+		promptsPath:    t.TempDir() + "/prompts.toml",
+	}
+	body := `{"messages":[{"role":"user","content":"skapa ett spel"}],"local_workspace":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/eutherpunk/workspace/jobs", strings.NewReader(body))
+	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authPrincipal{
+		User:     "nichlas",
+		Scopes:   []string{"eutherpunk:chat"},
+		AuthMode: "cli_token",
+	}))
+	rec := httptest.NewRecorder()
+	handleWorkspaceJobStart(cfg)(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("start status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var startedJob workspaceJob
+	if err := json.NewDecoder(rec.Body).Decode(&startedJob); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		workspaceJobsMu.Lock()
+		job := workspaceJobViewLocked(workspaceJobs[startedJob.ID])
+		workspaceJobsMu.Unlock()
+		if job.Status == "completed" {
+			if generationCalls != 2 || reviewCalls != 2 {
+				t.Fatalf("generation=%d review=%d", generationCalls, reviewCalls)
+			}
+			if len(job.Files) != 1 || !strings.Contains(job.Files[0].Content, "fungerar") {
+				t.Fatalf("repaired files = %#v", job.Files)
+			}
+			break
+		}
+		if job.Status == "failed" || time.Now().After(deadline) {
+			t.Fatalf("repair job did not complete: %#v", job)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

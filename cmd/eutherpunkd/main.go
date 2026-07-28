@@ -397,6 +397,7 @@ func main() {
 	mux.HandleFunc("POST /api/eutherpunk/workspace/jobs", auth.protect("eutherpunk:chat", false, handleWorkspaceJobStart(cfg)))
 	mux.HandleFunc("GET /api/eutherpunk/workspace/jobs/{id}", auth.protect("eutherpunk:chat", false, handleWorkspaceJobGet()))
 	mux.HandleFunc("DELETE /api/eutherpunk/workspace/jobs/{id}", auth.protect("eutherpunk:chat", false, handleWorkspaceJobCancel()))
+	mux.HandleFunc("POST /api/eutherpunk/workspace/jobs/{id}/repair", auth.protect("eutherpunk:chat", false, handleWorkspaceJobRepair(cfg)))
 	mux.HandleFunc("POST /api/eutherpunk/tts", auth.protect("eutherpunk:media", false, handleTTS(cfg)))
 	mux.HandleFunc("POST /api/eutherpunk/images/generate", auth.protect("eutherpunk:media", false, handleImageGenerate(cfg)))
 	mux.HandleFunc("GET /api/eutherpunk/images/jobs/{id}", auth.protect("eutherpunk:media", false, handleImageJobGet()))

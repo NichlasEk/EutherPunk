@@ -194,6 +194,10 @@ The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured
 format validation, and local proposal validation. It deliberately does not
 expose private model reasoning or stream unvalidated partial source code.
+Before a proposal becomes available, a separate adversarial review pass checks
+its behavior against the request. Concrete defects are fed back into up to two
+complete repair rounds. A proposal that still fails review is withheld instead
+of being presented as usable code.
 The server may use a dedicated coding model through
 `EUTHERPUNK_WORKSPACE_MODEL`; it defaults to the server agent model while normal
 chat keeps the user's selected conversational model.

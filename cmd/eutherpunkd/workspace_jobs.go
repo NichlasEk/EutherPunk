@@ -28,8 +28,10 @@ type workspaceJob struct {
 	CreatedAt  time.Time               `json:"created_at"`
 	UpdatedAt  time.Time               `json:"updated_at"`
 
-	user   string
-	cancel context.CancelFunc
+	user         string
+	task         string
+	cancel       context.CancelFunc
+	localRepairs int
 }
 
 type workspaceJobActivity struct {
@@ -102,6 +104,7 @@ func handleWorkspaceJobStart(cfg serverConfig) http.HandlerFunc {
 			CreatedAt: now,
 			UpdatedAt: now,
 			user:      principal.User,
+			task:      lastUserMessage(messages),
 			cancel:    cancel,
 		}
 		workspaceJobsMu.Lock()
@@ -140,25 +143,32 @@ func runWorkspaceJob(
 	jobID, model, system string,
 	messages []ollamaMessage,
 ) {
+	task := lastUserMessage(messages)
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
 		job.Status = "running"
 		job.Message = "Modellen arbetar med filförslaget."
 		appendWorkspaceJobActivityLocked(job, "Arbetsytekontext och instruktioner har förberetts.")
 	})
+	progress := func(message string) {
+		updateWorkspaceJob(jobID, func(job *workspaceJob) {
+			if job.Status == "running" {
+				appendWorkspaceJobActivityLocked(job, message)
+			}
+		})
+	}
 	message, files, err := askWorkspaceOllama(
 		ctx,
 		cfg.ollamaURL,
 		model,
 		system,
 		messages,
-		func(message string) {
-			updateWorkspaceJob(jobID, func(job *workspaceJob) {
-				if job.Status == "running" {
-					appendWorkspaceJobActivityLocked(job, message)
-				}
-			})
-		},
+		progress,
 	)
+	if err == nil && len(files) > 0 {
+		message, files, err = qualityReviewWorkspaceProposal(
+			ctx, cfg, model, task, message, files, progress,
+		)
+	}
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
 		if job.Status == "cancelled" {
 			return
@@ -185,6 +195,169 @@ func runWorkspaceJob(
 				fmt.Sprintf("Filförslaget är klart: %d fil(er), %d byte.", len(files), totalBytes),
 			)
 		}
+	})
+}
+
+func qualityReviewWorkspaceProposal(
+	ctx context.Context,
+	cfg serverConfig,
+	model, task, message string,
+	files []workspaceResponseFile,
+	progress func(string),
+) (string, []workspaceResponseFile, error) {
+	for round := 0; round <= maxWorkspaceRepairRounds; round++ {
+		progress(fmt.Sprintf("Kvalitetsgranskning %d kontrollerar logik och krav.", round+1))
+		review, err := reviewWorkspaceProposalOllama(
+			ctx,
+			cfg.ollamaURL,
+			model,
+			task,
+			message,
+			files,
+		)
+		if err != nil {
+			return "", nil, fmt.Errorf("kvalitetsgranskning: %w", err)
+		}
+		if review.Accepted {
+			progress(fmt.Sprintf("Kvalitetsgranskning %d godkände förslaget.", round+1))
+			return message, files, nil
+		}
+		for _, issue := range review.Issues {
+			progress("Granskaren hittade: " + issue)
+		}
+		if round == maxWorkspaceRepairRounds {
+			progress("Förslaget stoppades efter två misslyckade reparationsvarv.")
+			return "Förslaget klarade inte den automatiska kvalitetsgranskningen efter två reparationsvarv. Inga filer föreslås eller ändras.", nil, nil
+		}
+		progress(fmt.Sprintf("Reparationsvarv %d startar.", round+1))
+		message, files, err = repairWorkspaceProposalOllama(
+			ctx,
+			cfg.ollamaURL,
+			model,
+			task,
+			message,
+			files,
+			review.Issues,
+			progress,
+		)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	return message, files, nil
+}
+
+type workspaceRepairRequest struct {
+	Diagnostics string `json:"diagnostics"`
+}
+
+func handleWorkspaceJobRepair(cfg serverConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := principalFromContext(r.Context())
+		if !ok || principal.AuthMode != "cli_token" {
+			writeError(w, http.StatusForbidden, errors.New("workspace repairs require CLI authentication"))
+			return
+		}
+		var req workspaceRepairRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req.Diagnostics = strings.TrimSpace(req.Diagnostics)
+		if req.Diagnostics == "" || len(req.Diagnostics) > 16*1024 {
+			writeError(w, http.StatusBadRequest, errors.New("valid local diagnostics are required"))
+			return
+		}
+		id := safeID(r.PathValue("id"))
+		workspaceJobsMu.Lock()
+		job, ok := workspaceJobs[id]
+		if !ok || job.user != principal.User {
+			workspaceJobsMu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		if job.Status != "completed" || len(job.Files) == 0 {
+			workspaceJobsMu.Unlock()
+			writeError(w, http.StatusConflict, errors.New("only a completed proposal can be repaired"))
+			return
+		}
+		if job.localRepairs >= 2 {
+			workspaceJobsMu.Unlock()
+			writeError(w, http.StatusConflict, errors.New("local repair limit reached"))
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		job.localRepairs++
+		job.Status = "running"
+		job.Error = ""
+		job.cancel = cancel
+		job.UpdatedAt = time.Now().UTC()
+		appendWorkspaceJobActivityLocked(job, "Den lokala körkontrollen hittade ett fel.")
+		appendWorkspaceJobActivityLocked(job, "Diagnosen skickas till modellen för reparation.")
+		model := job.Model
+		task := job.task
+		message := job.Message
+		files := append([]workspaceResponseFile(nil), job.Files...)
+		view := workspaceJobViewLocked(job)
+		workspaceJobsMu.Unlock()
+
+		go runWorkspaceJobLocalRepair(
+			ctx, cfg, id, model, task, message, files, req.Diagnostics,
+		)
+		writeJSON(w, http.StatusAccepted, view)
+	}
+}
+
+func runWorkspaceJobLocalRepair(
+	ctx context.Context,
+	cfg serverConfig,
+	jobID, model, task, message string,
+	files []workspaceResponseFile,
+	diagnostics string,
+) {
+	progress := func(message string) {
+		updateWorkspaceJob(jobID, func(job *workspaceJob) {
+			if job.Status == "running" {
+				appendWorkspaceJobActivityLocked(job, message)
+			}
+		})
+	}
+	message, files, err := repairWorkspaceProposalOllama(
+		ctx,
+		cfg.ollamaURL,
+		model,
+		task,
+		message,
+		files,
+		[]string{"Lokal körkontroll: " + diagnostics},
+		progress,
+	)
+	if err == nil && len(files) > 0 {
+		message, files, err = qualityReviewWorkspaceProposal(
+			ctx, cfg, model, task, message, files, progress,
+		)
+	}
+	updateWorkspaceJob(jobID, func(job *workspaceJob) {
+		if job.Status == "cancelled" {
+			return
+		}
+		if err != nil {
+			job.Status = "failed"
+			job.Message = "Reparationsjobbet misslyckades."
+			job.Error = err.Error()
+			return
+		}
+		job.Status = "completed"
+		job.Message = message
+		job.Files = files
+		totalBytes := 0
+		for _, file := range files {
+			totalBytes += len(file.Content)
+		}
+		appendWorkspaceJobActivityLocked(
+			job,
+			fmt.Sprintf("Det reparerade filförslaget är klart: %d fil(er), %d byte.", len(files), totalBytes),
+		)
 	})
 }
 
@@ -278,6 +451,7 @@ func workspaceJobView(job *workspaceJob) workspaceJob {
 func workspaceJobViewLocked(job *workspaceJob) workspaceJob {
 	view := *job
 	view.user = ""
+	view.task = ""
 	view.cancel = nil
 	view.Files = append([]workspaceResponseFile(nil), job.Files...)
 	view.Activities = append([]workspaceJobActivity(nil), job.Activities...)

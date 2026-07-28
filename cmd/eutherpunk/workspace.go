@@ -266,6 +266,25 @@ func handleWorkspaceJobCommand(
 		if err != nil {
 			return err
 		}
+		if validationErr := validateProposalSyntax(proposal); validationErr != nil {
+			repaired, repairErr := requestWorkspaceJobRepair(
+				context.Background(),
+				cfg,
+				pending.Job.ID,
+				validationErr.Error(),
+			)
+			if repairErr != nil {
+				return fmt.Errorf("lokal kontroll: %v; reparation: %w", validationErr, repairErr)
+			}
+			pending.Job = repaired
+			printWorkspaceJobActivities(output, repaired, &pending.LastActivity)
+			_, _ = fmt.Fprintf(
+				output,
+				"Den lokala kontrollen hittade ett körfel och startade ett reparationsvarv:\n%s\n",
+				validationErr,
+			)
+			return nil
+		}
 		_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
 		*pending = pendingWorkspaceJob{}
 		return err
@@ -396,6 +415,31 @@ func waitWorkspaceJob(
 			if err != nil {
 				_, _ = fmt.Fprintf(output, "Lokal kontroll stoppade förslaget: %v\r\n", err)
 				return "", fileProposal{}, err
+			}
+			if validationErr := validateProposalSyntax(proposal); validationErr != nil {
+				_, _ = fmt.Fprintf(
+					output,
+					"Lokal kontroll hittade ett körfel och skickar tillbaka det för reparation:\r\n%v\r\n",
+					validationErr,
+				)
+				repaired, repairErr := requestWorkspaceJobRepair(
+					ctx,
+					cfg,
+					job.ID,
+					validationErr.Error(),
+				)
+				if repairErr != nil {
+					return "", fileProposal{}, fmt.Errorf(
+						"lokal kontroll: %v; reparation: %w",
+						validationErr,
+						repairErr,
+					)
+				}
+				job = repaired
+				started = time.Now()
+				nextProgress = 10 * time.Second
+				pollImmediately = true
+				continue
 			}
 			_, _ = io.WriteString(output, "Lokal kontroll godkänd; visar förhandsvisning.\r\n")
 			return message, proposal, nil
@@ -545,6 +589,33 @@ func cancelWorkspaceJob(cfg cliConfig, id string) {
 		cfg.apiURL+"/api/eutherpunk/workspace/jobs/"+url.PathEscape(id),
 		nil,
 	)
+}
+
+func requestWorkspaceJobRepair(
+	ctx context.Context,
+	cfg cliConfig,
+	id, diagnostics string,
+) (workspaceJobResponse, error) {
+	raw, err := json.Marshal(struct {
+		Diagnostics string `json:"diagnostics"`
+	}{Diagnostics: diagnostics})
+	if err != nil {
+		return workspaceJobResponse{}, err
+	}
+	job, status, err := requestWorkspaceJob(
+		ctx,
+		cfg,
+		http.MethodPost,
+		cfg.apiURL+"/api/eutherpunk/workspace/jobs/"+url.PathEscape(id)+"/repair",
+		raw,
+	)
+	if err != nil {
+		return workspaceJobResponse{}, err
+	}
+	if status != http.StatusAccepted && status != http.StatusOK {
+		return workspaceJobResponse{}, fmt.Errorf("HTTP %d: %s", status, job.Error)
+	}
+	return job, nil
 }
 
 func requestWorkspaceAnswerLegacy(
