@@ -52,9 +52,11 @@ var availableCommands = []string{
 }
 
 type lineEditor struct {
-	reader   *bufio.Reader
-	history  []string
-	terminal terminalSettings
+	reader            *bufio.Reader
+	history           []string
+	terminal          terminalSettings
+	rendered          bool
+	renderedCursorRow int
 }
 
 func newLineEditor(reader *bufio.Reader, settings terminalSettings) *lineEditor {
@@ -80,6 +82,12 @@ func (editor *lineEditor) ReadLine(prompt string) (string, error) {
 		return strings.TrimRight(line, "\r\n"), readErr
 	}
 	defer term.Restore(fd, oldState)
+	editor.rendered = false
+	editor.renderedCursorRow = 0
+	defer func() {
+		editor.rendered = false
+		editor.renderedCursorRow = 0
+	}()
 
 	line := ""
 	historyIndex := len(editor.history)
@@ -94,7 +102,7 @@ func (editor *lineEditor) ReadLine(prompt string) (string, error) {
 		}
 		switch key {
 		case "\r", "\n":
-			if _, err := fmt.Print("\r\n"); err != nil {
+			if err := editor.finishInput(prompt, line); err != nil {
 				return "", err
 			}
 			if editor.terminal.History && strings.TrimSpace(line) != "" {
@@ -223,17 +231,91 @@ func (editor *lineEditor) redrawInput(prompt, line string) error {
 	if suggestion != "" && len(line) <= len(suggestion) {
 		suffix = suggestion[len(line):]
 	}
-	if _, err := fmt.Printf("\r\x1b[2K%s%s", prompt, line); err != nil {
+	width := editor.terminalWidth()
+	if err := editor.clearRenderedInput(); err != nil {
 		return err
 	}
-	if suffix == "" {
+	if _, err := fmt.Printf("%s%s", prompt, line); err != nil {
+		return err
+	}
+	if suffix != "" {
+		if _, err := fmt.Printf("%s%s%s", ghostColorANSI(editor.terminal.GhostColor), suffix, ansiReset); err != nil {
+			return err
+		}
+	}
+	targetRow, targetColumn := terminalCursorPosition(
+		utf8.RuneCountInString(prompt)+utf8.RuneCountInString(line),
+		width,
+	)
+	endRow, _ := terminalCursorPosition(
+		utf8.RuneCountInString(prompt)+utf8.RuneCountInString(line)+utf8.RuneCountInString(suffix),
+		width,
+	)
+	if endRow > targetRow {
+		if _, err := fmt.Printf("\x1b[%dA", endRow-targetRow); err != nil {
+			return err
+		}
+	}
+	if suffix != "" {
+		if _, err := fmt.Printf("\x1b[%dG", targetColumn); err != nil {
+			return err
+		}
+	}
+	editor.rendered = true
+	editor.renderedCursorRow = targetRow
+	return nil
+}
+
+func (editor *lineEditor) finishInput(prompt, line string) error {
+	if err := editor.clearRenderedInput(); err != nil {
+		return err
+	}
+	_, err := fmt.Printf("%s%s\r\n", prompt, line)
+	return err
+}
+
+func (editor *lineEditor) clearRenderedInput() error {
+	if !editor.rendered {
 		return nil
 	}
-	if _, err := fmt.Printf("%s%s%s", ghostColorANSI(editor.terminal.GhostColor), suffix, ansiReset); err != nil {
+	if _, err := fmt.Print("\r"); err != nil {
 		return err
 	}
-	_, err := fmt.Printf("\x1b[%dD", utf8.RuneCountInString(suffix))
-	return err
+	if editor.renderedCursorRow > 0 {
+		if _, err := fmt.Printf("\x1b[%dA", editor.renderedCursorRow); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Print("\x1b[J"); err != nil {
+		return err
+	}
+	editor.rendered = false
+	editor.renderedCursorRow = 0
+	return nil
+}
+
+func (editor *lineEditor) terminalWidth() int {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width < 1 {
+		width, _, err = term.GetSize(int(os.Stdin.Fd()))
+	}
+	if err != nil || width < 1 {
+		return 80
+	}
+	return width
+}
+
+func terminalCursorPosition(columns, width int) (row, column int) {
+	if width < 1 {
+		width = 80
+	}
+	if columns <= 0 {
+		return 0, 1
+	}
+	if columns%width == 0 {
+		return columns/width - 1, width
+	}
+	return columns / width, columns%width + 1
 }
 
 func (editor *lineEditor) suggestion(input string) string {
