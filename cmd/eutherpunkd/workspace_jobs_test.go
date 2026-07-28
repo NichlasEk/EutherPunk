@@ -14,6 +14,13 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Model != "coder-model" {
+			t.Fatalf("workspace model = %q", request.Model)
+		}
 		close(started)
 		<-release
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
@@ -31,11 +38,12 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 	workspaceJobs = map[string]*workspaceJob{}
 	workspaceJobsMu.Unlock()
 	cfg := serverConfig{
-		ollamaURL:   ollama.URL,
-		model:       "test-model",
-		visionModel: "vision-model",
-		settingsDir: t.TempDir(),
-		promptsPath: t.TempDir() + "/prompts.toml",
+		ollamaURL:      ollama.URL,
+		model:          "chat-model",
+		workspaceModel: "coder-model",
+		visionModel:    "vision-model",
+		settingsDir:    t.TempDir(),
+		promptsPath:    t.TempDir() + "/prompts.toml",
 	}
 	body := `{"messages":[{"role":"user","content":"skapa"}],"local_workspace":true}`
 	req := httptest.NewRequest(http.MethodPost, "/api/eutherpunk/workspace/jobs", strings.NewReader(body))

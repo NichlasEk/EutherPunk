@@ -162,8 +162,9 @@ exits.
 When `eutherpunk` starts in a project directory, it offers to initialize the
 current directory as the workspace for that session. Answering no keeps the CLI
 in chat-only mode.
-When `luac` is installed, proposed `.lua` files are syntax-checked before the
-approval prompt; invalid proposals are rejected without writing anything.
+When `luac` or Node.js is installed, proposed Lua, JavaScript, and inline HTML
+scripts are syntax-checked before the approval prompt; invalid proposals are
+rejected without writing anything.
 
 `/workspace init <directory>` creates and selects a new project directory;
 `/workspace use <directory>` selects an existing one. The home directory and
@@ -184,6 +185,9 @@ a job returns immediately; the CLI polls short status requests, prints elapsed
 progress every ten seconds, and sends a server-side cancellation when the user
 presses Escape twice. Completed, failed, cancelled, and expired jobs therefore
 have explicit outcomes instead of depending on one long proxy request.
+The server may use a dedicated coding model through
+`EUTHERPUNK_WORKSPACE_MODEL`; it defaults to the server agent model while normal
+chat keeps the user's selected conversational model.
 
 ```text
 POST   /api/eutherpunk/workspace/jobs
@@ -307,6 +311,7 @@ GET /downloads/eutherpunk-cli/darwin-arm64
 EUTHERPUNK_ADDR=:8787
 EUTHERPUNK_URL=http://127.0.0.1:8787
 EUTHERPUNK_MODEL=qwen3-coder:30b
+EUTHERPUNK_WORKSPACE_MODEL=qwen3-coder:30b
 EUTHERPUNK_CONFIG=/home/nichlas/.config/eutherpunk/config.toml
 OLLAMA_URL=http://127.0.0.1:11434
 ```

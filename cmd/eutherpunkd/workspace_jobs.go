@@ -67,7 +67,7 @@ func handleWorkspaceJobStart(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		model := selectedChatModel(settings, req.Model, messages)
+		model := workspaceModelForConfig(cfg)
 		if isVisionRequest(settings, model, messages) {
 			writeError(w, http.StatusBadRequest, errors.New("workspace jobs do not accept image requests"))
 			return
@@ -112,6 +112,13 @@ func handleWorkspaceJobStart(cfg serverConfig) http.HandlerFunc {
 		go runWorkspaceJob(ctx, cfg, job.ID, model, system, messages)
 		writeJSON(w, http.StatusAccepted, workspaceJobView(job))
 	}
+}
+
+func workspaceModelForConfig(cfg serverConfig) string {
+	if model := strings.TrimSpace(cfg.workspaceModel); model != "" {
+		return model
+	}
+	return strings.TrimSpace(cfg.model)
 }
 
 func runWorkspaceJob(

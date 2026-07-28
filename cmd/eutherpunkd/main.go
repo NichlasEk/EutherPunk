@@ -60,6 +60,7 @@ type serverConfig struct {
 	addr                 string
 	ollamaURL            string
 	model                string
+	workspaceModel       string
 	visionModel          string
 	configPath           string
 	chatDir              string
@@ -342,6 +343,7 @@ func main() {
 		addr:                 envOr("EUTHERPUNK_ADDR", appConfig.Agent.Listen),
 		ollamaURL:            strings.TrimRight(envOr("OLLAMA_URL", appConfig.Agent.OllamaURL), "/"),
 		model:                envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
+		workspaceModel:       envOr("EUTHERPUNK_WORKSPACE_MODEL", appConfig.Agent.Model),
 		visionModel:          envOr("EUTHERPUNK_VISION_MODEL", appConfig.Agent.VisionModel),
 		configPath:           appConfig.Path,
 		chatDir:              envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),
@@ -401,7 +403,14 @@ func main() {
 	mux.HandleFunc("GET /api/eutherpunk/images/{user}/{file}", auth.protect("eutherpunk:media", false, handleStoredImage(cfg)))
 	mux.HandleFunc("GET /downloads/eutherpunk-cli/{platform}", handleCLIDownload(cfg))
 
-	log.Printf("eutherpunkd listening on %s, ollama=%s, model=%s, vision_model=%s", cfg.addr, cfg.ollamaURL, cfg.model, cfg.visionModel)
+	log.Printf(
+		"eutherpunkd listening on %s, ollama=%s, model=%s, workspace_model=%s, vision_model=%s",
+		cfg.addr,
+		cfg.ollamaURL,
+		cfg.model,
+		workspaceModelForConfig(cfg),
+		cfg.visionModel,
+	)
 	if err := http.ListenAndServe(cfg.addr, logRequests(mux)); err != nil {
 		log.Fatal(err)
 	}
@@ -410,11 +419,12 @@ func main() {
 func handleStatus(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":            true,
-			"service":       "eutherpunk",
-			"model":         cfg.model,
-			"vision_model":  cfg.visionModel,
-			"auth_required": cfg.authRequired,
+			"ok":              true,
+			"service":         "eutherpunk",
+			"model":           cfg.model,
+			"workspace_model": workspaceModelForConfig(cfg),
+			"vision_model":    cfg.visionModel,
+			"auth_required":   cfg.authRequired,
 		})
 	}
 }
@@ -714,7 +724,12 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		principal, _ := principalFromContext(r.Context())
+		workspaceRequest := req.LocalWorkspace && principal.AuthMode == "cli_token"
 		model := selectedChatModel(settings, req.Model, messages)
+		if workspaceRequest {
+			model = workspaceModelForConfig(cfg)
+		}
 		visionRequest := isVisionRequest(settings, model, messages)
 		messages = messagesForSelectedModel(settings, model, messages)
 		system := req.System
@@ -727,8 +742,7 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 
 		var answer string
 		var workspaceFiles []workspaceResponseFile
-		principal, _ := principalFromContext(r.Context())
-		workspaceRequest := req.LocalWorkspace && principal.AuthMode == "cli_token" && !visionRequest
+		workspaceRequest = workspaceRequest && !visionRequest
 		if workspaceRequest {
 			answer, workspaceFiles, err = askWorkspaceOllama(
 				r.Context(), cfg.ollamaURL, model, system, messages,

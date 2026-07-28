@@ -152,6 +152,33 @@ func TestInvalidLuaProposalIsRejectedBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestInvalidInlineJavaScriptIsRejectedBeforeWrite(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	root := t.TempDir()
+	proposal := fileProposal{Files: []workspaceFile{{
+		Path:    "tetris.html",
+		Content: "<!doctype html><script>const broken = ;</script>\n",
+	}}}
+	permissions := sessionPermissions{files: permissionSession}
+	applied, err := approveAndApplyProposal(
+		bufio.NewReader(strings.NewReader("y\n")),
+		workspaceState{Root: root},
+		&permissions,
+		proposal,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("invalid inline JavaScript must not be applied")
+	}
+	if _, err := os.Stat(filepath.Join(root, "tetris.html")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid HTML file unexpectedly exists: %v", err)
+	}
+}
+
 func TestParseFileProposalKeepsVisibleAnswer(t *testing.T) {
 	answer := "Jag skapar spelet.\n```eutherpunk_files\n" +
 		`{"files":[{"path":"main.lua","content":"print('tetris')\n"}]}` +

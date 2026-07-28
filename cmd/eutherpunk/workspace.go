@@ -190,6 +190,15 @@ func requestWorkspaceAnswer(
 	if job.ID == "" {
 		return "", fileProposal{}, errors.New("servern returnerade inget jobb-ID")
 	}
+	shortID := job.ID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	if job.Model != "" {
+		_, _ = fmt.Fprintf(output, "Kodjobb %s startat med %s.\r\n", shortID, job.Model)
+	} else {
+		_, _ = fmt.Fprintf(output, "Kodjobb %s startat.\r\n", shortID)
+	}
 
 	started := time.Now()
 	nextProgress := 10 * time.Second
