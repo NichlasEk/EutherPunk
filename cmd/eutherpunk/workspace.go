@@ -474,6 +474,13 @@ func approveAndApplyProposal(
 		fmt.Println("Filåtkomst är avstängd. Aktivera med /permissions files ask.")
 		return false, nil
 	}
+	if err := validateProposalSyntax(proposal); err != nil {
+		fmt.Println()
+		fmt.Println("FILFÖRSLAGET NEKADES AUTOMATISKT")
+		fmt.Println(err)
+		fmt.Println("Inga filer har ändrats.")
+		return false, nil
+	}
 	root, err := canonicalWorkspaceRoot(workspace)
 	if err != nil {
 		return false, err

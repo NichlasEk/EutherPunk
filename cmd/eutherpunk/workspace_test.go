@@ -4,7 +4,9 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,7 +105,7 @@ func TestApprovedReplacementPreservesPreviousFile(t *testing.T) {
 	if err := os.WriteFile(target, []byte("old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	proposal := fileProposal{Files: []workspaceFile{{Path: "main.lua", Content: "new\n"}}}
+	proposal := fileProposal{Files: []workspaceFile{{Path: "main.lua", Content: "print('new')\n"}}}
 	permissions := sessionPermissions{files: permissionAsk}
 	applied, err := approveAndApplyProposal(
 		bufio.NewReader(strings.NewReader("y\n")),
@@ -120,6 +122,33 @@ func TestApprovedReplacementPreservesPreviousFile(t *testing.T) {
 	}
 	if string(backup) != "old\n" {
 		t.Fatalf("backup = %q", backup)
+	}
+}
+
+func TestInvalidLuaProposalIsRejectedBeforeWrite(t *testing.T) {
+	if _, err := exec.LookPath("luac"); err != nil {
+		t.Skip("luac is not installed")
+	}
+	root := t.TempDir()
+	proposal := fileProposal{Files: []workspaceFile{{
+		Path:    "main.lua",
+		Content: "pieceY = piececut = pieceY + 1\n",
+	}}}
+	permissions := sessionPermissions{files: permissionSession}
+	applied, err := approveAndApplyProposal(
+		bufio.NewReader(strings.NewReader("y\n")),
+		workspaceState{Root: root},
+		&permissions,
+		proposal,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("invalid Lua proposal must not be applied")
+	}
+	if _, err := os.Stat(filepath.Join(root, "main.lua")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid Lua file unexpectedly exists: %v", err)
 	}
 }
 

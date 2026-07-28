@@ -162,6 +162,8 @@ exits.
 When `eutherpunk` starts in a project directory, it offers to initialize the
 current directory as the workspace for that session. Answering no keeps the CLI
 in chat-only mode.
+When `luac` is installed, proposed `.lua` files are syntax-checked before the
+approval prompt; invalid proposals are rejected without writing anything.
 
 `/workspace init <directory>` creates and selects a new project directory;
 `/workspace use <directory>` selects an existing one. The home directory and
