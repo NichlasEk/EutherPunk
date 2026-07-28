@@ -22,6 +22,10 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 		if request.Options["num_ctx"] != float64(ollamaNumCtx) {
 			t.Fatalf("num_ctx = %#v", request.Options["num_ctx"])
 		}
+		if len(request.Messages) == 0 ||
+			!strings.Contains(request.Messages[0].Content, "Kontrollera särskilt att varje") {
+			t.Fatalf("workspace system prompt saknar slutkontroll: %#v", request.Messages)
+		}
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
 			Message: ollamaMessage{
 				Role: "assistant",

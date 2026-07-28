@@ -2109,7 +2109,13 @@ Du hjälper en lokal CLI-kodarbetsyta. Svara som JSON enligt det givna schemat.
 "message" är en kort förklaring till användaren. "files" innehåller endast
 kompletta filer som behöver skapas eller ersättas. Varje path måste vara relativ.
 Skicka aldrig markdown-kodstaket, ofullständiga filer, hemligheter eller fler
-filer än uppgiften kräver. Om inga filer behövs ska files vara en tom lista.`
+filer än uppgiften kräver. Tänk och kontrollera lösningen internt före svaret.
+Lägg aldrig självrättningar, alternativa utkast, resonemang, TODO, placeholders
+eller kommentarer som "vänta" i message eller filinnehåll. Varje källfil ska
+vara den enda slutliga, sammanhängande versionen. Kontrollera särskilt att varje
+anropad funktion och identifierare antingen definieras i filförslaget eller ingår
+i målmiljöns standard-API. Om du inte kan leverera kompletta filer ska files vara
+en tom lista och message kort förklara varför.`
 	format := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,

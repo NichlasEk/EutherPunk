@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -164,9 +165,14 @@ func doctor(cfg cliConfig) error {
 }
 
 func assist(cfg cliConfig, initialPrompt string) error {
+	reader := bufio.NewReader(os.Stdin)
+	if err := offerCurrentDirectoryWorkspace(reader, &cfg.workspace); err != nil {
+		fmt.Fprintln(os.Stderr, "workspace warning:", err)
+	}
 	if err := cfg.ensureAuthenticated(true); err != nil {
 		return err
 	}
+
 	fmt.Printf("EutherPunk %s\n", version)
 	fmt.Println("Försiktig förhandsversion: chatt, systeminformation och avgränsade kodarbetsytor.")
 	fmt.Println("CLI:t kan bara läsa vald arbetsyta och frågar alltid innan filer ändras.")
@@ -176,7 +182,6 @@ func assist(cfg cliConfig, initialPrompt string) error {
 	fmt.Println("Minne:", cfg.memory.StatusLine())
 	fmt.Println()
 
-	reader := bufio.NewReader(os.Stdin)
 	editor := newLineEditor(reader, cfg.settings.Terminal)
 	history := make([]chatMessage, 0, 12)
 	permissions := defaultSessionPermissions()
@@ -284,6 +289,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			return nil
 		case "/help":
 			fmt.Println("Skriv ett meddelande och tryck Enter.")
+			fmt.Println("Tryck Esc två gånger inom 1,5 sekunder för att avbryta agenten.")
 			fmt.Println("Uppåtpil eller Tab accepterar ett giftgrönt kommandoförslag.")
 			fmt.Println("Uppåtpil visar historik när inget förslag syns.")
 			fmt.Println("/memory visar eller ändrar det lokala långtidsminnet.")
@@ -340,10 +346,18 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		if cfg.workspace.Root != "" {
 			answer, err = workspaceChat(cfg, trimHistory(history), reader, &permissions, os.Stdout)
 		} else {
-			answer, err = streamChat(cfg, trimHistory(history), os.Stdout)
+			answer, err = runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
+				return streamChatContext(ctx, cfg, trimHistory(history), os.Stdout)
+			})
 		}
 		if err != nil {
 			fmt.Println()
+			if errors.Is(err, errAgentInterrupted) {
+				fmt.Println("Agenten avbröts. Du kan fortsätta skriva.")
+				history = history[:len(history)-1]
+				prompt = ""
+				continue
+			}
 			fmt.Fprintln(os.Stderr, "anslutningsfel:", err)
 			history = history[:len(history)-1]
 			prompt = ""
@@ -371,6 +385,10 @@ func chat(cfg cliConfig, prompt string) error {
 }
 
 func streamChat(cfg cliConfig, messages []chatMessage, output io.Writer) (string, error) {
+	return streamChatContext(context.Background(), cfg, messages, output)
+}
+
+func streamChatContext(ctx context.Context, cfg cliConfig, messages []chatMessage, output io.Writer) (string, error) {
 	raw, err := json.Marshal(chatRequest{
 		Messages:      chatOnlyMessages(messages),
 		Model:         cfg.model,
@@ -380,7 +398,7 @@ func streamChat(cfg cliConfig, messages []chatMessage, output io.Writer) (string
 		return "", err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, cfg.apiURL+"/api/eutherpunk/chat/stream", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.apiURL+"/api/eutherpunk/chat/stream", bytes.NewReader(raw))
 	if err != nil {
 		return "", err
 	}

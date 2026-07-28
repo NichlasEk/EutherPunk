@@ -159,6 +159,10 @@ exits.
 
 ### Local coding workspace
 
+When `eutherpunk` starts in a project directory, it offers to initialize the
+current directory as the workspace for that session. Answering no keeps the CLI
+in chat-only mode.
+
 `/workspace init <directory>` creates and selects a new project directory;
 `/workspace use <directory>` selects an existing one. The home directory and
 filesystem root cannot be selected as a workspace. EutherPunk may snapshot at

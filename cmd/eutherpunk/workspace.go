@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -38,6 +41,42 @@ type fileProposal struct {
 	Files []workspaceFile `json:"files"`
 }
 
+func offerCurrentDirectoryWorkspace(reader *bufio.Reader, state *workspaceState) error {
+	if state.Root != "" || !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil
+	}
+	current, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	current, err = filepath.EvalSymlinks(current)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(current)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || unsafeWorkspaceRoot(current) {
+		return nil
+	}
+
+	fmt.Println("Current directory:", current)
+	fmt.Print("Would you like to initialize this directory as an EutherPunk workspace? [y/N]: ")
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		state.Root = filepath.Clean(current)
+		fmt.Println("Workspace initialized for this session.")
+		fmt.Println("EutherPunk cannot access files outside this directory.")
+		fmt.Println()
+	}
+	return nil
+}
+
 func workspaceChat(
 	cfg cliConfig,
 	messages []chatMessage,
@@ -50,9 +89,17 @@ func workspaceChat(
 		return "", err
 	}
 	if !allowed {
-		return streamChat(cfg, messages, output)
+		return runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
+			return streamChatContext(ctx, cfg, messages, output)
+		})
 	}
-	answer, structuredProposal, err := requestWorkspaceAnswer(cfg, messages, toolContext)
+	var structuredProposal fileProposal
+	answer, err := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
+		var requestErr error
+		var response string
+		response, structuredProposal, requestErr = requestWorkspaceAnswer(ctx, cfg, messages, toolContext)
+		return response, requestErr
+	})
 	if err != nil {
 		return "", err
 	}
@@ -93,6 +140,7 @@ func workspaceChat(
 }
 
 func requestWorkspaceAnswer(
+	ctx context.Context,
 	cfg cliConfig,
 	messages []chatMessage,
 	toolContext string,
@@ -111,7 +159,7 @@ func requestWorkspaceAnswer(
 	if err != nil {
 		return "", fileProposal{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, cfg.apiURL+"/api/eutherpunk/chat", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.apiURL+"/api/eutherpunk/chat", bytes.NewReader(raw))
 	if err != nil {
 		return "", fileProposal{}, err
 	}
