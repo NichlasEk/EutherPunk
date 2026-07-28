@@ -103,6 +103,10 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 			if job.Message != "klart" || len(job.Files) != 1 || job.Files[0].Path != "main.lua" {
 				t.Fatalf("completed job = %#v", job)
 			}
+			if len(job.Activities) < 5 ||
+				!strings.Contains(job.Activities[len(job.Activities)-1].Message, "1 fil") {
+				t.Fatalf("completed activities = %#v", job.Activities)
+			}
 			break
 		}
 		if time.Now().After(deadline) {

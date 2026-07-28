@@ -745,7 +745,7 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		workspaceRequest = workspaceRequest && !visionRequest
 		if workspaceRequest {
 			answer, workspaceFiles, err = askWorkspaceOllama(
-				r.Context(), cfg.ollamaURL, model, system, messages,
+				r.Context(), cfg.ollamaURL, model, system, messages, nil,
 			)
 		} else if visionRequest {
 			answer, err = askVisionOllama(r.Context(), cfg, prompts, system, messages)
@@ -2121,6 +2121,7 @@ func askWorkspaceOllama(
 	ctx context.Context,
 	ollamaURL, model, system string,
 	messages []ollamaMessage,
+	progress func(string),
 ) (string, []workspaceResponseFile, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -2165,7 +2166,7 @@ lista och message kort förklara varför.`
 	think := false
 	payload := ollamaChatRequest{
 		Model:    model,
-		Stream:   false,
+		Stream:   true,
 		Messages: append([]ollamaMessage{{Role: "system", Content: system}}, messages...),
 		Think:    &think,
 		Format:   format,
@@ -2189,26 +2190,49 @@ lista och message kort förklara varför.`
 		return "", nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if err != nil {
-		return "", nil, err
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 		return "", nil, fmt.Errorf("ollama returned %s: %s", resp.Status, string(body))
 	}
+	reportWorkspaceProgress(progress, "Modellen skapar ett strukturerat filförslag.")
 	var out ollamaChatResponse
-	if err := json.Unmarshal(body, &out); err != nil {
+	var content strings.Builder
+	var thinkingBytes int
+	lastReportedBytes := 0
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 512*1024))
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var chunk ollamaChatResponse
+		if err := json.Unmarshal(scanner.Bytes(), &chunk); err != nil {
+			return "", nil, err
+		}
+		if chunk.Error != "" {
+			return "", nil, errors.New(chunk.Error)
+		}
+		content.WriteString(chunk.Message.Content)
+		thinkingBytes += len(chunk.Message.Thinking)
+		if content.Len()-lastReportedBytes >= 2048 {
+			lastReportedBytes = content.Len()
+			reportWorkspaceProgress(
+				progress,
+				fmt.Sprintf("Modellen skriver filförslaget… cirka %.1f KiB genererat.", float64(content.Len())/1024),
+			)
+		}
+		if chunk.Done {
+			out = chunk
+		}
+	}
+	if err := scanner.Err(); err != nil {
 		return "", nil, err
 	}
-	if out.Error != "" {
-		return "", nil, errors.New(out.Error)
-	}
+	out.Message.Content = content.String()
+	reportWorkspaceProgress(progress, "Modellsvaret är mottaget; kontrollerar det strukturerade formatet.")
 	if strings.TrimSpace(out.Message.Content) == "" {
 		log.Printf(
 			"workspace model returned empty content: done_reason=%q eval_count=%d thinking_bytes=%d",
 			out.DoneReason,
 			out.EvalCount,
-			len(out.Message.Thinking),
+			thinkingBytes,
 		)
 		return "Modellen använde inget av svaret till ett färdigt filförslag. Inga filer ändrades; försök igen.", nil, nil
 	}
@@ -2231,7 +2255,14 @@ lista och message kort förklara varför.`
 	if len(workspace.Files) > 16 {
 		return "", nil, errors.New("workspace model proposed too many files")
 	}
+	reportWorkspaceProgress(progress, "Det strukturerade filformatet är giltigt.")
 	return workspace.Message, workspace.Files, nil
+}
+
+func reportWorkspaceProgress(progress func(string), message string) {
+	if progress != nil {
+		progress(message)
+	}
 }
 
 func askVisionOllama(ctx context.Context, cfg serverConfig, prompts promptSettings, system string, messages []ollamaMessage) (string, error) {

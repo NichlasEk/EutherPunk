@@ -44,12 +44,23 @@ type fileProposal struct {
 }
 
 type workspaceJobResponse struct {
-	ID      string          `json:"id"`
-	Status  string          `json:"status"`
-	Model   string          `json:"model,omitempty"`
-	Message string          `json:"message,omitempty"`
-	Files   []workspaceFile `json:"files,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	ID         string                 `json:"id"`
+	Status     string                 `json:"status"`
+	Model      string                 `json:"model,omitempty"`
+	Message    string                 `json:"message,omitempty"`
+	Activities []workspaceJobActivity `json:"activities,omitempty"`
+	Files      []workspaceFile        `json:"files,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+}
+
+type workspaceJobActivity struct {
+	Sequence int    `json:"sequence"`
+	Message  string `json:"message"`
+}
+
+type pendingWorkspaceJob struct {
+	Job          workspaceJobResponse
+	LastActivity int
 }
 
 func offerCurrentDirectoryWorkspace(reader *bufio.Reader, state *workspaceState) error {
@@ -114,6 +125,17 @@ func workspaceChat(
 	if err != nil {
 		return "", err
 	}
+	return reviewWorkspaceResult(reader, cfg.workspace, permissions, output, answer, structuredProposal)
+}
+
+func reviewWorkspaceResult(
+	reader *bufio.Reader,
+	workspace workspaceState,
+	permissions *sessionPermissions,
+	output io.Writer,
+	answer string,
+	structuredProposal fileProposal,
+) (string, error) {
 	proposal := structuredProposal
 	visible := answer
 	found := len(proposal.Files) > 0
@@ -136,7 +158,7 @@ func workspaceChat(
 	if visible != "" {
 		_, _ = io.WriteString(output, "\n")
 	}
-	applied, err := approveAndApplyProposal(reader, cfg.workspace, permissions, proposal)
+	applied, err := approveAndApplyProposal(reader, workspace, permissions, proposal)
 	if err != nil {
 		return visible, err
 	}
@@ -150,6 +172,124 @@ func workspaceChat(
 	return summary, nil
 }
 
+func beginBackgroundWorkspaceJob(
+	ctx context.Context,
+	cfg cliConfig,
+	messages []chatMessage,
+	reader *bufio.Reader,
+	permissions *sessionPermissions,
+	output io.Writer,
+) (pendingWorkspaceJob, bool, error) {
+	toolContext, allowed, err := approvedWorkspaceContext(reader, cfg.workspace, permissions)
+	if err != nil || !allowed {
+		return pendingWorkspaceJob{}, false, err
+	}
+	job, status, err := startWorkspaceJob(ctx, cfg, messages, toolContext)
+	if err != nil {
+		return pendingWorkspaceJob{}, false, err
+	}
+	if status != http.StatusAccepted && status != http.StatusOK {
+		return pendingWorkspaceJob{}, false, fmt.Errorf("starta kodjobb: HTTP %d: %s", status, job.Error)
+	}
+	if job.ID == "" {
+		return pendingWorkspaceJob{}, false, errors.New("servern returnerade inget jobb-ID")
+	}
+	printWorkspaceJobStarted(output, job)
+	_, _ = io.WriteString(
+		output,
+		"Jobbet arbetar i bakgrunden. Du kan fortsätta prata; /job visar läget.\r\n",
+	)
+	return pendingWorkspaceJob{Job: job, LastActivity: 1}, true, nil
+}
+
+func handleWorkspaceJobCommand(
+	cfg cliConfig,
+	command string,
+	pending *pendingWorkspaceJob,
+	reader *bufio.Reader,
+	permissions *sessionPermissions,
+	output io.Writer,
+) error {
+	if pending.Job.ID == "" {
+		_, _ = io.WriteString(output, "Inget kodjobb finns i den här CLI-sessionen.\n")
+		return nil
+	}
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(command)))
+	action := "status"
+	if len(fields) > 1 {
+		action = fields[1]
+	}
+	switch action {
+	case "cancel", "avbryt":
+		cancelWorkspaceJob(cfg, pending.Job.ID)
+		_, _ = io.WriteString(output, "Kodjobbet har avbrutits.\n")
+		*pending = pendingWorkspaceJob{}
+		return nil
+	case "wait", "vänta", "vanta":
+		var message string
+		var proposal fileProposal
+		err := func() error {
+			answer, waitErr := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
+				var innerErr error
+				message, proposal, innerErr = waitWorkspaceJob(
+					ctx,
+					cfg,
+					pending.Job,
+					output,
+					&pending.LastActivity,
+				)
+				return message, innerErr
+			})
+			message = answer
+			return waitErr
+		}()
+		if err != nil {
+			if errors.Is(err, errAgentInterrupted) {
+				_, _ = io.WriteString(output, "\nBevakningen avbröts. Serverjobbet har också avbrutits.\n")
+				*pending = pendingWorkspaceJob{}
+				return nil
+			}
+			return err
+		}
+		_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
+		*pending = pendingWorkspaceJob{}
+		return err
+	case "open", "öppna", "oppna":
+		if err := refreshPendingWorkspaceJob(context.Background(), cfg, pending, output); err != nil {
+			return err
+		}
+		if pending.Job.Status != "completed" {
+			_, _ = fmt.Fprintf(output, "Kodjobbet är %s. Använd /job wait för att följa det.\n", pending.Job.Status)
+			return nil
+		}
+		message, proposal, err := validateWorkspaceJobResult(pending.Job)
+		if err != nil {
+			return err
+		}
+		_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
+		*pending = pendingWorkspaceJob{}
+		return err
+	case "status":
+		if err := refreshPendingWorkspaceJob(context.Background(), cfg, pending, output); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(output, "Kodjobb %s: %s.\n", shortWorkspaceJobID(pending.Job.ID), pending.Job.Status)
+		if pending.Job.Status == "completed" {
+			_, _ = io.WriteString(output, "Förslaget är klart. Använd /job open för att granska det.\n")
+		}
+		return nil
+	default:
+		return errors.New("använd /job, /job wait, /job open eller /job cancel")
+	}
+}
+
+func shortWorkspaceJobID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
 func requestWorkspaceAnswer(
 	ctx context.Context,
 	cfg cliConfig,
@@ -157,31 +297,15 @@ func requestWorkspaceAnswer(
 	toolContext string,
 	output io.Writer,
 ) (string, fileProposal, error) {
-	clientContext := strings.TrimSpace(cfg.memory.ClientContext())
-	if clientContext != "" {
-		clientContext += "\n\n"
-	}
-	clientContext += toolContext
-	raw, err := json.Marshal(chatRequest{
-		Messages:       chatOnlyMessages(messages),
-		Model:          cfg.model,
-		ClientContext:  clientContext,
-		LocalWorkspace: true,
-	})
-	if err != nil {
-		return "", fileProposal{}, err
-	}
-	job, status, err := requestWorkspaceJob(
-		ctx,
-		cfg,
-		http.MethodPost,
-		cfg.apiURL+"/api/eutherpunk/workspace/jobs",
-		raw,
-	)
+	job, status, err := startWorkspaceJob(ctx, cfg, messages, toolContext)
 	if err != nil {
 		return "", fileProposal{}, err
 	}
 	if status == http.StatusNotFound {
+		raw, marshalErr := workspaceJobRequestBody(cfg, messages, toolContext)
+		if marshalErr != nil {
+			return "", fileProposal{}, marshalErr
+		}
 		return requestWorkspaceAnswerLegacy(ctx, cfg, raw)
 	}
 	if status != http.StatusAccepted && status != http.StatusOK {
@@ -190,6 +314,49 @@ func requestWorkspaceAnswer(
 	if job.ID == "" {
 		return "", fileProposal{}, errors.New("servern returnerade inget jobb-ID")
 	}
+	printWorkspaceJobStarted(output, job)
+	lastActivity := 1
+	return waitWorkspaceJob(ctx, cfg, job, output, &lastActivity)
+}
+
+func workspaceJobRequestBody(
+	cfg cliConfig,
+	messages []chatMessage,
+	toolContext string,
+) ([]byte, error) {
+	clientContext := strings.TrimSpace(cfg.memory.ClientContext())
+	if clientContext != "" {
+		clientContext += "\n\n"
+	}
+	clientContext += toolContext
+	return json.Marshal(chatRequest{
+		Messages:       chatOnlyMessages(messages),
+		Model:          cfg.model,
+		ClientContext:  clientContext,
+		LocalWorkspace: true,
+	})
+}
+
+func startWorkspaceJob(
+	ctx context.Context,
+	cfg cliConfig,
+	messages []chatMessage,
+	toolContext string,
+) (workspaceJobResponse, int, error) {
+	raw, err := workspaceJobRequestBody(cfg, messages, toolContext)
+	if err != nil {
+		return workspaceJobResponse{}, 0, err
+	}
+	return requestWorkspaceJob(
+		ctx,
+		cfg,
+		http.MethodPost,
+		cfg.apiURL+"/api/eutherpunk/workspace/jobs",
+		raw,
+	)
+}
+
+func printWorkspaceJobStarted(output io.Writer, job workspaceJobResponse) {
 	shortID := job.ID
 	if len(shortID) > 8 {
 		shortID = shortID[:8]
@@ -199,14 +366,39 @@ func requestWorkspaceAnswer(
 	} else {
 		_, _ = fmt.Fprintf(output, "Kodjobb %s startat.\r\n", shortID)
 	}
+}
 
+func waitWorkspaceJob(
+	ctx context.Context,
+	cfg cliConfig,
+	job workspaceJobResponse,
+	output io.Writer,
+	lastActivity *int,
+) (string, fileProposal, error) {
 	started := time.Now()
 	nextProgress := 10 * time.Second
 	pollImmediately := true
 	for {
+		printWorkspaceJobActivities(output, job, lastActivity)
 		switch job.Status {
 		case "completed":
-			return validateWorkspaceJobResult(job)
+			totalBytes := 0
+			for _, file := range job.Files {
+				totalBytes += len(file.Content)
+			}
+			_, _ = fmt.Fprintf(
+				output,
+				"Lokal kontroll: granskar %d fil(er), %d byte…\r\n",
+				len(job.Files),
+				totalBytes,
+			)
+			message, proposal, err := validateWorkspaceJobResult(job)
+			if err != nil {
+				_, _ = fmt.Fprintf(output, "Lokal kontroll stoppade förslaget: %v\r\n", err)
+				return "", fileProposal{}, err
+			}
+			_, _ = io.WriteString(output, "Lokal kontroll godkänd; visar förhandsvisning.\r\n")
+			return message, proposal, nil
 		case "failed":
 			if job.Error == "" {
 				job.Error = "okänt serverfel"
@@ -236,7 +428,7 @@ func requestWorkspaceAnswer(
 			case <-timer.C:
 			}
 		}
-		job, status, err = requestWorkspaceJob(
+		nextJob, status, err := requestWorkspaceJob(
 			ctx,
 			cfg,
 			http.MethodGet,
@@ -249,9 +441,47 @@ func requestWorkspaceAnswer(
 		}
 		if status != http.StatusOK {
 			cancelWorkspaceJob(cfg, job.ID)
-			return "", fileProposal{}, fmt.Errorf("hämta kodjobb: HTTP %d: %s", status, job.Error)
+			return "", fileProposal{}, fmt.Errorf("hämta kodjobb: HTTP %d: %s", status, nextJob.Error)
 		}
+		job = nextJob
 	}
+}
+
+func printWorkspaceJobActivities(output io.Writer, job workspaceJobResponse, lastActivity *int) {
+	for _, activity := range job.Activities {
+		if activity.Sequence <= *lastActivity || strings.TrimSpace(activity.Message) == "" {
+			continue
+		}
+		_, _ = fmt.Fprintf(output, "  ↳ %s\r\n", activity.Message)
+		*lastActivity = activity.Sequence
+	}
+}
+
+func refreshPendingWorkspaceJob(
+	ctx context.Context,
+	cfg cliConfig,
+	pending *pendingWorkspaceJob,
+	output io.Writer,
+) error {
+	if pending == nil || pending.Job.ID == "" {
+		return nil
+	}
+	job, status, err := requestWorkspaceJob(
+		ctx,
+		cfg,
+		http.MethodGet,
+		cfg.apiURL+"/api/eutherpunk/workspace/jobs/"+url.PathEscape(pending.Job.ID),
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("hämta kodjobb: HTTP %d: %s", status, job.Error)
+	}
+	pending.Job = job
+	printWorkspaceJobActivities(output, job, &pending.LastActivity)
+	return nil
 }
 
 func requestWorkspaceJob(

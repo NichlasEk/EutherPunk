@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -17,17 +18,24 @@ const (
 )
 
 type workspaceJob struct {
-	ID        string                  `json:"id"`
-	Status    string                  `json:"status"`
-	Model     string                  `json:"model,omitempty"`
-	Message   string                  `json:"message,omitempty"`
-	Files     []workspaceResponseFile `json:"files,omitempty"`
-	Error     string                  `json:"error,omitempty"`
-	CreatedAt time.Time               `json:"created_at"`
-	UpdatedAt time.Time               `json:"updated_at"`
+	ID         string                  `json:"id"`
+	Status     string                  `json:"status"`
+	Model      string                  `json:"model,omitempty"`
+	Message    string                  `json:"message,omitempty"`
+	Activities []workspaceJobActivity  `json:"activities,omitempty"`
+	Files      []workspaceResponseFile `json:"files,omitempty"`
+	Error      string                  `json:"error,omitempty"`
+	CreatedAt  time.Time               `json:"created_at"`
+	UpdatedAt  time.Time               `json:"updated_at"`
 
 	user   string
 	cancel context.CancelFunc
+}
+
+type workspaceJobActivity struct {
+	Sequence int       `json:"sequence"`
+	Message  string    `json:"message"`
+	At       time.Time `json:"at"`
 }
 
 var (
@@ -82,10 +90,15 @@ func handleWorkspaceJobStart(cfg serverConfig) http.HandlerFunc {
 		now := time.Now().UTC()
 		ctx, cancel := context.WithCancel(context.Background())
 		job := &workspaceJob{
-			ID:        randomID(),
-			Status:    "queued",
-			Model:     model,
-			Message:   "Kodjobbet köades.",
+			ID:      randomID(),
+			Status:  "queued",
+			Model:   model,
+			Message: "Kodjobbet köades.",
+			Activities: []workspaceJobActivity{{
+				Sequence: 1,
+				Message:  "Kodjobbet har placerats i kön.",
+				At:       now,
+			}},
 			CreatedAt: now,
 			UpdatedAt: now,
 			user:      principal.User,
@@ -130,8 +143,22 @@ func runWorkspaceJob(
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
 		job.Status = "running"
 		job.Message = "Modellen arbetar med filförslaget."
+		appendWorkspaceJobActivityLocked(job, "Arbetsytekontext och instruktioner har förberetts.")
 	})
-	message, files, err := askWorkspaceOllama(ctx, cfg.ollamaURL, model, system, messages)
+	message, files, err := askWorkspaceOllama(
+		ctx,
+		cfg.ollamaURL,
+		model,
+		system,
+		messages,
+		func(message string) {
+			updateWorkspaceJob(jobID, func(job *workspaceJob) {
+				if job.Status == "running" {
+					appendWorkspaceJobActivityLocked(job, message)
+				}
+			})
+		},
+	)
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
 		if job.Status == "cancelled" {
 			return
@@ -149,8 +176,38 @@ func runWorkspaceJob(
 			job.Status = "completed"
 			job.Message = message
 			job.Files = files
+			totalBytes := 0
+			for _, file := range files {
+				totalBytes += len(file.Content)
+			}
+			appendWorkspaceJobActivityLocked(
+				job,
+				fmt.Sprintf("Filförslaget är klart: %d fil(er), %d byte.", len(files), totalBytes),
+			)
 		}
 	})
+}
+
+func appendWorkspaceJobActivityLocked(job *workspaceJob, message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	if count := len(job.Activities); count > 0 && job.Activities[count-1].Message == message {
+		return
+	}
+	sequence := 1
+	if count := len(job.Activities); count > 0 {
+		sequence = job.Activities[count-1].Sequence + 1
+	}
+	job.Activities = append(job.Activities, workspaceJobActivity{
+		Sequence: sequence,
+		Message:  message,
+		At:       time.Now().UTC(),
+	})
+	if len(job.Activities) > 32 {
+		job.Activities = append([]workspaceJobActivity(nil), job.Activities[len(job.Activities)-32:]...)
+	}
 }
 
 func handleWorkspaceJobGet() http.HandlerFunc {
@@ -223,6 +280,7 @@ func workspaceJobViewLocked(job *workspaceJob) workspaceJob {
 	view.user = ""
 	view.cancel = nil
 	view.Files = append([]workspaceResponseFile(nil), job.Files...)
+	view.Activities = append([]workspaceJobActivity(nil), job.Activities...)
 	return view
 }
 

@@ -181,10 +181,16 @@ available in this version. This is enough to create and revise small projects;
 the user still runs or builds them separately.
 
 Workspace generation uses an authenticated asynchronous job protocol. Starting
-a job returns immediately; the CLI polls short status requests, prints elapsed
-progress every ten seconds, and sends a server-side cancellation when the user
-presses Escape twice. Completed, failed, cancelled, and expired jobs therefore
-have explicit outcomes instead of depending on one long proxy request.
+a job returns the `du>` prompt immediately so normal conversation can continue
+while one coding job works in the background. `/job` polls its activity,
+`/job wait` follows it in the foreground, `/job open` reviews a completed
+proposal, and `/job cancel` stops it. Escape twice while waiting also sends a
+server-side cancellation. Completed, failed, cancelled, and expired jobs
+therefore have explicit outcomes instead of depending on one long proxy request.
+The status response also contains a bounded activity log. The CLI shows real
+pipeline events such as context preparation, model generation volume, structured
+format validation, and local proposal validation. It deliberately does not
+expose private model reasoning or stream unvalidated partial source code.
 The server may use a dedicated coding model through
 `EUTHERPUNK_WORKSPACE_MODEL`; it defaults to the server agent model while normal
 chat keeps the user's selected conversational model.

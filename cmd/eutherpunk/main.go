@@ -185,6 +185,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 	editor := newLineEditor(reader, cfg.settings.Terminal)
 	history := make([]chatMessage, 0, 12)
 	permissions := defaultSessionPermissions()
+	pendingJob := pendingWorkspaceJob{}
 	if cfg.settings.Exists {
 		permissions.systemInfo = cfg.settings.SystemInfo
 		permissions.files = cfg.settings.Files
@@ -242,6 +243,20 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			prompt = ""
 			continue
 		}
+		if lowerPrompt == "/job" || strings.HasPrefix(lowerPrompt, "/job ") {
+			if err := handleWorkspaceJobCommand(
+				cfg,
+				prompt,
+				&pendingJob,
+				reader,
+				&permissions,
+				os.Stdout,
+			); err != nil {
+				fmt.Fprintln(os.Stderr, "kodjobbsfel:", err)
+			}
+			prompt = ""
+			continue
+		}
 		if lowerPrompt == "/system" || lowerPrompt == "/system share" || lowerPrompt == "/system share full" {
 			report, allowed, err := approvedSystemReport(reader, &permissions)
 			if err != nil {
@@ -286,6 +301,9 @@ func assist(cfg cliConfig, initialPrompt string) error {
 
 		switch lowerPrompt {
 		case "/exit", "/quit", "exit", "quit":
+			if pendingJob.Job.Status == "queued" || pendingJob.Job.Status == "running" {
+				cancelWorkspaceJob(cfg, pendingJob.Job.ID)
+			}
 			return nil
 		case "/help":
 			fmt.Println("Skriv ett meddelande och tryck Enter.")
@@ -297,6 +315,9 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
 			fmt.Println("/workspace init <katalog> skapar och väljer en avgränsad kodarbetsyta.")
 			fmt.Println("/workspace use <katalog> väljer en befintlig kodarbetsyta.")
+			fmt.Println("/job visar det aktiva kodjobbets bygglogg och status.")
+			fmt.Println("/job wait följer jobbet tills filförslaget kan granskas.")
+			fmt.Println("/job open öppnar ett färdigt förslag; /job cancel avbryter.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
 			fmt.Println("/system share delar en maskerad rapport med modellen.")
 			fmt.Println("/system share full delar även identifierande fält efter extra godkännande.")
@@ -340,16 +361,40 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		}
 
 		history = append(history, chatMessage{Role: "user", Content: prompt})
+		if cfg.workspace.Root != "" && pendingJob.Job.ID == "" {
+			fmt.Println("eutherpunk> startar kodjobb…")
+			startedJob, started, startErr := beginBackgroundWorkspaceJob(
+				context.Background(),
+				cfg,
+				trimHistory(history),
+				reader,
+				&permissions,
+				os.Stdout,
+			)
+			if startErr != nil {
+				fmt.Fprintln(os.Stderr, "kodjobbsfel:", startErr)
+				history = history[:len(history)-1]
+				prompt = ""
+				continue
+			}
+			if started {
+				pendingJob = startedJob
+				history = append(history, chatMessage{
+					Role:    "assistant",
+					Content: "[Kodjobbet arbetar i bakgrunden. Använd /job för status.]",
+				})
+				history = trimHistory(history)
+				prompt = ""
+				continue
+			}
+		}
+
 		fmt.Println("eutherpunk> arbetar… (Esc Esc avbryter)")
 		var answer string
 		var err error
-		if cfg.workspace.Root != "" {
-			answer, err = workspaceChat(cfg, trimHistory(history), reader, &permissions, os.Stdout)
-		} else {
-			answer, err = runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
-				return streamChatContext(ctx, cfg, trimHistory(history), os.Stdout)
-			})
-		}
+		answer, err = runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
+			return streamChatContext(ctx, cfg, trimHistory(history), os.Stdout)
+		})
 		if err != nil {
 			fmt.Println()
 			if errors.Is(err, errAgentInterrupted) {

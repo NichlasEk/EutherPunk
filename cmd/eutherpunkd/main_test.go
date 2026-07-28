@@ -25,6 +25,9 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 		if request.Think == nil || *request.Think {
 			t.Fatalf("workspace thinking must be disabled: %#v", request.Think)
 		}
+		if !request.Stream {
+			t.Fatal("workspace response must stream for activity updates")
+		}
 		if len(request.Messages) == 0 ||
 			!strings.Contains(request.Messages[0].Content, "Kontrollera särskilt att varje") {
 			t.Fatalf("workspace system prompt saknar slutkontroll: %#v", request.Messages)
@@ -43,18 +46,27 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 	}))
 	defer ollama.Close()
 
+	var progress []string
 	message, files, err := askWorkspaceOllama(
 		context.Background(),
 		ollama.URL,
 		"test-model",
 		"system",
 		[]ollamaMessage{{Role: "user", Content: "skapa"}},
+		func(message string) {
+			progress = append(progress, message)
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if message != "klart" || len(files) != 1 || files[0].Path != "main.lua" {
 		t.Fatalf("message=%q, files=%#v", message, files)
+	}
+	if len(progress) < 3 ||
+		!strings.Contains(progress[0], "strukturerat") ||
+		!strings.Contains(progress[len(progress)-1], "giltigt") {
+		t.Fatalf("progress=%#v", progress)
 	}
 }
 
@@ -75,6 +87,7 @@ func TestAskWorkspaceOllamaHandlesEmptyThinkingResponseWithoutGatewayError(t *te
 		"test-model",
 		"system",
 		[]ollamaMessage{{Role: "user", Content: "skapa"}},
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)

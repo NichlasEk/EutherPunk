@@ -275,6 +275,7 @@ func TestCommandSuggestion(t *testing.T) {
 		"/system s":             "/system share",
 		"/system share f":       "/system share full",
 		"/settings r":           "/settings reload",
+		"/job w":                "/job wait",
 		"/unknown":              "",
 	}
 	for input, expected := range tests {
