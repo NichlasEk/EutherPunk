@@ -56,20 +56,24 @@ var (
 )
 
 type serverConfig struct {
-	addr           string
-	ollamaURL      string
-	model          string
-	visionModel    string
-	configPath     string
-	chatDir        string
-	settingsDir    string
-	promptsPath    string
-	downloadsDir   string
-	eutherOxideURL string
-	eutherNet      config.EutherNetConfig
-	voice          config.VoiceConfig
-	image          config.ImageConfig
-	users          map[string]config.UserConfig
+	addr                 string
+	ollamaURL            string
+	model                string
+	visionModel          string
+	configPath           string
+	chatDir              string
+	settingsDir          string
+	promptsPath          string
+	downloadsDir         string
+	eutherOxideURL       string
+	eutherOxideStatusURL string
+	publicURL            string
+	authRequired         bool
+	authStorePath        string
+	eutherNet            config.EutherNetConfig
+	voice                config.VoiceConfig
+	image                config.ImageConfig
+	users                map[string]config.UserConfig
 }
 
 type chatRequest struct {
@@ -322,43 +326,63 @@ func main() {
 	}
 
 	cfg := serverConfig{
-		addr:           envOr("EUTHERPUNK_ADDR", appConfig.Agent.Listen),
-		ollamaURL:      strings.TrimRight(envOr("OLLAMA_URL", appConfig.Agent.OllamaURL), "/"),
-		model:          envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
-		visionModel:    envOr("EUTHERPUNK_VISION_MODEL", appConfig.Agent.VisionModel),
-		configPath:     appConfig.Path,
-		chatDir:        envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),
-		settingsDir:    envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)),
-		promptsPath:    envOr("EUTHERPUNK_PROMPTS_PATH", defaultPromptsPath(envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)))),
-		downloadsDir:   appConfig.Downloads.Directory,
-		eutherOxideURL: appConfig.EutherOxide.UsersURL,
-		eutherNet:      appConfig.EutherNet,
-		voice:          appConfig.Voice,
-		image:          appConfig.Image,
-		users:          appConfig.Users,
+		addr:                 envOr("EUTHERPUNK_ADDR", appConfig.Agent.Listen),
+		ollamaURL:            strings.TrimRight(envOr("OLLAMA_URL", appConfig.Agent.OllamaURL), "/"),
+		model:                envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
+		visionModel:          envOr("EUTHERPUNK_VISION_MODEL", appConfig.Agent.VisionModel),
+		configPath:           appConfig.Path,
+		chatDir:              envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),
+		settingsDir:          envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)),
+		promptsPath:          envOr("EUTHERPUNK_PROMPTS_PATH", defaultPromptsPath(envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)))),
+		downloadsDir:         appConfig.Downloads.Directory,
+		eutherOxideURL:       appConfig.EutherOxide.UsersURL,
+		eutherOxideStatusURL: envOr("EUTHERPUNK_EUTHEROXIDE_STATUS_URL", appConfig.EutherOxide.StatusURL),
+		publicURL:            envOr("EUTHERPUNK_PUBLIC_URL", appConfig.Server.PublicURL),
+		authRequired:         appConfig.EutherOxide.AuthRequired,
+		authStorePath:        envOr("EUTHERPUNK_AUTH_STORE", filepath.Join(envOr("EUTHERPUNK_SETTINGS_DIR", defaultSettingsDirectory(appConfig.Image)), "cli-auth-state.json")),
+		eutherNet:            appConfig.EutherNet,
+		voice:                appConfig.Voice,
+		image:                appConfig.Image,
+		users:                appConfig.Users,
+	}
+
+	authStore, err := loadAuthStore(cfg.authStorePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	auth, err := newAuthService(cfg.authRequired, cfg.publicURL, cfg.eutherOxideStatusURL, authStore)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", handleWebIndex())
 	mux.HandleFunc("GET /eutherpunk", handleWebIndex())
+	mux.HandleFunc("GET /eutherpunk/cli/authorize", auth.handleAuthorizeGet())
+	mux.HandleFunc("POST /eutherpunk/cli/authorize", auth.handleAuthorizePost())
 	mux.HandleFunc("GET /web/{file}", handleWebAsset())
 	mux.HandleFunc("GET /api/eutherpunk/status", handleStatus(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/models", handleModels(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/users", handleUsers(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/settings", handleSettingsGet(cfg))
-	mux.HandleFunc("PUT /api/eutherpunk/settings", handleSettingsPut(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/admin/prompts", handlePromptsGet(cfg))
-	mux.HandleFunc("PUT /api/eutherpunk/admin/prompts", handlePromptsPut(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/conversations", handleConversationList(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/conversations/{id}", handleConversationGet(cfg))
-	mux.HandleFunc("PUT /api/eutherpunk/conversations/{id}", handleConversationPut(cfg))
-	mux.HandleFunc("DELETE /api/eutherpunk/conversations/{id}", handleConversationDelete(cfg))
-	mux.HandleFunc("POST /api/eutherpunk/chat", handleChat(cfg))
-	mux.HandleFunc("POST /api/eutherpunk/chat/stream", handleChatStream(cfg))
-	mux.HandleFunc("POST /api/eutherpunk/tts", handleTTS(cfg))
-	mux.HandleFunc("POST /api/eutherpunk/images/generate", handleImageGenerate(cfg))
-	mux.HandleFunc("GET /api/eutherpunk/images/jobs/{id}", handleImageJobGet())
-	mux.HandleFunc("GET /api/eutherpunk/images/{user}/{file}", handleStoredImage(cfg))
+	mux.HandleFunc("POST /api/eutherpunk/auth/device", auth.handleDeviceStart())
+	mux.HandleFunc("POST /api/eutherpunk/auth/token", auth.handleToken())
+	mux.HandleFunc("POST /api/eutherpunk/auth/refresh", auth.handleRefresh())
+	mux.HandleFunc("GET /api/eutherpunk/auth/me", auth.handleMe())
+	mux.HandleFunc("POST /api/eutherpunk/auth/revoke", auth.handleRevoke())
+	mux.HandleFunc("GET /api/eutherpunk/models", auth.protect("eutherpunk:chat", false, handleModels(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/users", auth.protect("eutherpunk:admin", true, handleUsers(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/settings", auth.protect("eutherpunk:settings", false, handleSettingsGet(cfg)))
+	mux.HandleFunc("PUT /api/eutherpunk/settings", auth.protect("eutherpunk:settings", false, handleSettingsPut(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/admin/prompts", auth.protect("eutherpunk:admin", true, handlePromptsGet(cfg)))
+	mux.HandleFunc("PUT /api/eutherpunk/admin/prompts", auth.protect("eutherpunk:admin", true, handlePromptsPut(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/conversations", auth.protect("eutherpunk:conversations", false, handleConversationList(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/conversations/{id}", auth.protect("eutherpunk:conversations", false, handleConversationGet(cfg)))
+	mux.HandleFunc("PUT /api/eutherpunk/conversations/{id}", auth.protect("eutherpunk:conversations", false, handleConversationPut(cfg)))
+	mux.HandleFunc("DELETE /api/eutherpunk/conversations/{id}", auth.protect("eutherpunk:conversations", false, handleConversationDelete(cfg)))
+	mux.HandleFunc("POST /api/eutherpunk/chat", auth.protect("eutherpunk:chat", false, handleChat(cfg)))
+	mux.HandleFunc("POST /api/eutherpunk/chat/stream", auth.protect("eutherpunk:chat", false, handleChatStream(cfg)))
+	mux.HandleFunc("POST /api/eutherpunk/tts", auth.protect("eutherpunk:media", false, handleTTS(cfg)))
+	mux.HandleFunc("POST /api/eutherpunk/images/generate", auth.protect("eutherpunk:media", false, handleImageGenerate(cfg)))
+	mux.HandleFunc("GET /api/eutherpunk/images/jobs/{id}", auth.protect("eutherpunk:media", false, handleImageJobGet()))
+	mux.HandleFunc("GET /api/eutherpunk/images/{user}/{file}", auth.protect("eutherpunk:media", false, handleStoredImage(cfg)))
 	mux.HandleFunc("GET /downloads/eutherpunk-cli/{platform}", handleCLIDownload(cfg))
 
 	log.Printf("eutherpunkd listening on %s, ollama=%s, model=%s, vision_model=%s", cfg.addr, cfg.ollamaURL, cfg.model, cfg.visionModel)
@@ -370,35 +394,11 @@ func main() {
 func handleStatus(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":           true,
-			"service":      "eutherpunk",
-			"model":        cfg.model,
-			"vision_model": cfg.visionModel,
-			"ollama_url":   cfg.ollamaURL,
-			"config":       cfg.configPath,
-			"chat_dir":     cfg.chatDir,
-			"settings_dir": cfg.settingsDir,
-			"downloads":    cfg.downloadsDir,
-			"euthernet": map[string]any{
-				"enabled": cfg.eutherNet.Enabled,
-				"url":     cfg.eutherNet.URL,
-			},
-			"voice": map[string]any{
-				"eutherlink_url": cfg.voice.EutherLinkURL,
-				"model_backend":  cfg.voice.ModelBackend,
-				"language":       cfg.voice.Language,
-			},
-			"image": map[string]any{
-				"comfyui_url":       cfg.image.ComfyUIURL,
-				"directory":         cfg.image.Directory,
-				"configured_width":  cfg.image.DefaultWidth,
-				"configured_height": cfg.image.DefaultHeight,
-				"configured_steps":  cfg.image.DefaultSteps,
-				"default_width":     defaultImageDimension(0, cfg.image.DefaultWidth, safeImageDefaultWidth),
-				"default_height":    defaultImageDimension(0, cfg.image.DefaultHeight, safeImageDefaultHeight),
-				"default_steps":     defaultImageSteps(0, cfg.image.DefaultSteps),
-			},
-			"users": len(cfg.users),
+			"ok":            true,
+			"service":       "eutherpunk",
+			"model":         cfg.model,
+			"vision_model":  cfg.visionModel,
+			"auth_required": cfg.authRequired,
 		})
 	}
 }
@@ -3476,8 +3476,8 @@ func truncateTitle(value string) string {
 }
 
 func requestUser(r *http.Request, cfg serverConfig) string {
-	for _, header := range []string{"X-EutherOxide-User", "X-Forwarded-User", "X-Remote-User"} {
-		if value := safePathSegment(r.Header.Get(header)); value != "" {
+	if principal, ok := principalFromContext(r.Context()); ok {
+		if value := safePathSegment(principal.User); value != "" {
 			return value
 		}
 	}

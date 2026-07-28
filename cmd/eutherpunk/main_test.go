@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -47,6 +48,9 @@ func TestStreamChatSendsConversationHistory(t *testing.T) {
 		if got := req.Header.Get("X-EutherPunk-Client-Mode"); got != "chat-only" {
 			t.Fatalf("client mode header = %q", got)
 		}
+		if got := req.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization header = %q", got)
+		}
 		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
 			t.Fatal(err)
 		}
@@ -64,9 +68,10 @@ func TestStreamChatSendsConversationHistory(t *testing.T) {
 
 	var output bytes.Buffer
 	answer, err := streamChat(cliConfig{
-		apiURL: "https://example.invalid",
-		model:  "test-model",
-		memory: memoryState{Enabled: true, Content: "Minns detta."},
+		apiURL:      "https://example.invalid",
+		model:       "test-model",
+		memory:      memoryState{Enabled: true, Content: "Minns detta."},
+		credentials: authCredentials{AccessToken: "test-token", ExpiresAt: time.Now().Add(time.Hour).Unix()},
 	}, []chatMessage{
 		{Role: "user", Content: "första"},
 		{Role: "assistant", Content: "svaret"},

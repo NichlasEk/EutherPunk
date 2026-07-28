@@ -23,11 +23,12 @@ var (
 )
 
 type cliConfig struct {
-	apiURL     string
-	model      string
-	configPath string
-	memory     memoryState
-	settings   cliSettings
+	apiURL      string
+	model       string
+	configPath  string
+	memory      memoryState
+	settings    cliSettings
+	credentials authCredentials
 }
 
 type chatMessage struct {
@@ -116,9 +117,17 @@ func main() {
 	case "status":
 		err = printGet(cfg.apiURL + "/api/eutherpunk/status")
 	case "models":
-		err = printGet(cfg.apiURL + "/api/eutherpunk/models")
+		err = authenticatedGet(&cfg, cfg.apiURL+"/api/eutherpunk/models")
 	case "users":
-		err = printGet(cfg.apiURL + "/api/eutherpunk/users")
+		err = authenticatedGet(&cfg, cfg.apiURL+"/api/eutherpunk/users")
+	case "auth":
+		if len(os.Args) > 2 && os.Args[2] == "login" {
+			err = cfg.login()
+		} else {
+			err = cfg.authStatus()
+		}
+	case "logout":
+		err = cfg.logout()
 	case "ask":
 		err = ask(cfg, strings.Join(os.Args[2:], " "))
 	case "chat":
@@ -152,6 +161,9 @@ func doctor(cfg cliConfig) error {
 }
 
 func assist(cfg cliConfig, initialPrompt string) error {
+	if err := cfg.ensureAuthenticated(true); err != nil {
+		return err
+	}
 	fmt.Printf("EutherPunk %s\n", version)
 	fmt.Println("Försiktig förhandsversion: chatt och godkänd systeminformation.")
 	fmt.Println("CLI:t kan inte läsa dina filer, köra valfria kommandon eller ändra datorn.")
@@ -270,6 +282,9 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("/system share full delar även identifierande fält efter extra godkännande.")
 			fmt.Println("/clear glömmer den lokala samtalstråden.")
 			fmt.Println("/status kontrollerar anslutningen.")
+			fmt.Println("/auth visar EutherID-inloggningen.")
+			fmt.Println("/auth login öppnar en ny säker webbläsarinloggning.")
+			fmt.Println("/logout återkallar och tar bort CLI-inloggningen.")
 			fmt.Println("/exit avslutar.")
 			prompt = ""
 			continue
@@ -281,6 +296,24 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		case "/status":
 			if err := printGet(cfg.apiURL + "/api/eutherpunk/status"); err != nil {
 				fmt.Fprintln(os.Stderr, "anslutningsfel:", err)
+			}
+			prompt = ""
+			continue
+		case "/auth":
+			if err := cfg.authStatus(); err != nil {
+				fmt.Fprintln(os.Stderr, "inloggningsfel:", err)
+			}
+			prompt = ""
+			continue
+		case "/auth login":
+			if err := cfg.login(); err != nil {
+				fmt.Fprintln(os.Stderr, "inloggningsfel:", err)
+			}
+			prompt = ""
+			continue
+		case "/logout":
+			if err := cfg.logout(); err != nil {
+				fmt.Fprintln(os.Stderr, "utloggningsfel:", err)
 			}
 			prompt = ""
 			continue
@@ -334,6 +367,9 @@ func streamChat(cfg cliConfig, messages []chatMessage, output io.Writer) (string
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "eutherpunk-cli/"+version)
 	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	if err := cfg.authorize(req); err != nil {
+		return "", err
+	}
 	resp, err := cliHTTPClient.Do(req)
 	if err != nil {
 		return "", err
@@ -392,6 +428,9 @@ func ask(cfg cliConfig, prompt string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "eutherpunk-cli/"+version)
 	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	if err := cfg.authorize(req); err != nil {
+		return err
+	}
 	resp, err := cliHTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -436,6 +475,30 @@ func printGet(url string) error {
 	return nil
 }
 
+func authenticatedGet(cfg *cliConfig, url string) error {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	if err := cfg.authorize(req); err != nil {
+		return err
+	}
+	resp, err := cliHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%s: %s", resp.Status, string(body))
+	}
+	fmt.Println(string(body))
+	return nil
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  eutherpunk")
@@ -444,6 +507,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  eutherpunk status")
 	fmt.Fprintln(os.Stderr, "  eutherpunk models")
 	fmt.Fprintln(os.Stderr, "  eutherpunk users")
+	fmt.Fprintln(os.Stderr, "  eutherpunk auth [login]")
+	fmt.Fprintln(os.Stderr, "  eutherpunk logout")
 	fmt.Fprintln(os.Stderr, "  eutherpunk ask <prompt>")
 	fmt.Fprintln(os.Stderr, "  eutherpunk chat <prompt>")
 	fmt.Fprintln(os.Stderr, "  eutherpunk version")

@@ -1,11 +1,28 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestRequestUserUsesAuthenticatedPrincipalNotHeaders(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-EutherPunk-User", "forged-admin")
+	req.Header.Set("X-User", "forged-admin")
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authPrincipal{
+		User:     "nichlas",
+		AuthMode: "cli_token",
+	}))
+	if got := requestUser(req, serverConfig{}); got != "nichlas" {
+		t.Fatalf("requestUser = %q", got)
+	}
+}
 
 func TestChatOnlyClientSkipsEutherNetRouting(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "/api/eutherpunk/chat", nil)

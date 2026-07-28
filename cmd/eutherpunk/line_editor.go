@@ -16,6 +16,8 @@ import (
 const ansiReset = "\x1b[0m"
 
 var availableCommands = []string{
+	"/auth",
+	"/auth login",
 	"/memory",
 	"/memory off",
 	"/memory on",
@@ -39,6 +41,7 @@ var availableCommands = []string{
 	"/status",
 	"/clear",
 	"/help",
+	"/logout",
 	"/exit",
 }
 

@@ -131,6 +131,9 @@ Interactive preview commands:
 /memory show|path|reload
 /settings
 /settings init|show|path|reload|save
+/auth
+/auth login
+/logout
 /system
 /system share
 /system share full
@@ -183,14 +186,31 @@ history = true
 ghost_color = "#5cff5c"
 ```
 
-## Authentication status
+## EutherID authentication
 
-The portable preview does not currently implement login or store credentials.
-The `X-EutherPunk-Client-Mode: chat-only` request header limits the official
-CLI's behavior but is not authentication and must not be trusted as an access
-control. Until server-side authentication and authorization are added, do not
-consider the public API private: chat and administrative endpoints must be
-protected at the reverse proxy or kept off the public internet.
+The CLI uses a browser/device flow. On first start it creates a short-lived
+PKCE-protected request, opens `apothictech.se`, and waits for an explicit
+approval from a browser session that was verified with EutherID. No EutherID
+password, internal EutherID token, or server key is entered into the CLI.
+
+The issued CLI token is limited to `eutherpunk:chat`: it cannot administer
+EutherPunk, change server settings, access stored web conversations, generate
+media, read local files, or execute commands. Access tokens last one hour and
+the rotating refresh token lasts at most 30 days. `/logout` revokes the whole
+token family.
+
+On Windows the credential is stored in Windows Credential Manager. Other
+platforms use a separate mode-`0600` credential file beside the config for
+development. Credentials are never written to `settings.toml` or `memory.md`;
+the server persists only SHA-256 token hashes. See
+`docs/CLI_AUTH_DESIGN.md` for the protocol and threat boundaries.
+
+The web app uses its existing EutherOxide browser cookie. Protected browser
+requests are accepted only when `/api/app/status` confirms that the session
+was created through EutherID; password-only browser sessions do not satisfy
+this requirement. Unsafe browser methods also require a same-origin
+`Origin`/`Referer`. The status page, CLI download and device-flow bootstrap are
+public; chat and all settings, conversation, media and admin APIs are protected.
 
 ## Portable Windows Preview
 

@@ -22,6 +22,7 @@ safe_mode = true
 [eutheroxide]
 base_url = "http://192.168.32.186:8080"
 users_url = "http://192.168.32.186:8080/api/app/users"
+status_url = "http://127.0.0.1:32162/api/app/status"
 auth_required = true
 
 [users.nichlas]
@@ -46,6 +47,9 @@ safe_mode = false
 	if user.EutherOxideUsername != "nichlas" {
 		t.Fatalf("EutherOxideUsername = %q", user.EutherOxideUsername)
 	}
+	if cfg.EutherOxide.StatusURL != "http://127.0.0.1:32162/api/app/status" {
+		t.Fatalf("StatusURL = %q", cfg.EutherOxide.StatusURL)
+	}
 	if user.SafeMode == nil {
 		t.Fatal("SafeMode was nil")
 	}
@@ -64,5 +68,8 @@ func TestLoadMissingConfigUsesDefaults(t *testing.T) {
 	}
 	if cfg.EutherOxide.UsersURL == "" {
 		t.Fatal("expected default EutherOxide users URL")
+	}
+	if cfg.EutherOxide.StatusURL == "" {
+		t.Fatal("expected default EutherOxide status URL")
 	}
 }

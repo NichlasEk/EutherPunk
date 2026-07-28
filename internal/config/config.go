@@ -64,6 +64,7 @@ type ImageConfig struct {
 type EutherOxideConfig struct {
 	BaseURL      string `json:"base_url"`
 	UsersURL     string `json:"users_url"`
+	StatusURL    string `json:"status_url"`
 	AuthRequired bool   `json:"auth_required"`
 }
 
@@ -125,6 +126,7 @@ func Default() Config {
 		EutherOxide: EutherOxideConfig{
 			BaseURL:      "http://192.168.32.186:8080",
 			UsersURL:     "http://192.168.32.186:8080/api/app/users",
+			StatusURL:    "http://192.168.32.186:8080/api/app/status",
 			AuthRequired: true,
 		},
 		EutherNet: EutherNetConfig{
@@ -266,6 +268,8 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.EutherOxide.BaseURL = mustString(raw)
 		case "users_url":
 			cfg.EutherOxide.UsersURL = mustString(raw)
+		case "status_url":
+			cfg.EutherOxide.StatusURL = mustString(raw)
 		case "auth_required":
 			cfg.EutherOxide.AuthRequired = mustBool(raw)
 		default:

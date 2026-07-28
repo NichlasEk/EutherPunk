@@ -25,6 +25,7 @@ timeout_seconds = 45
 [eutheroxide]
 base_url = "http://192.168.32.186:8080"
 users_url = "http://192.168.32.186:8080/api/app/users"
+status_url = "http://192.168.32.186:8080/api/app/status"
 auth_required = true
 
 [euthernet]
