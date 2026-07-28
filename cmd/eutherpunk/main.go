@@ -27,6 +27,7 @@ type cliConfig struct {
 	model      string
 	configPath string
 	memory     memoryState
+	settings   cliSettings
 }
 
 type chatMessage struct {
@@ -63,13 +64,35 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+	baseAPIURL := strings.TrimRight(cliValue("EUTHERPUNK_URL", appConfig.Agent.APIURL, defaultAPIURL, configExists), "/")
+	baseModel := cliValue("EUTHERPUNK_MODEL", appConfig.Agent.Model, defaultModel, configExists)
 	memory, memoryErr := loadMemoryState(appConfig.Path)
+	settingsDefaults := defaultCLISettings(appConfig.Path, baseAPIURL, baseModel, memory.Enabled)
+	settings, settingsErr := loadCLISettings(settingsDefaults)
+	if settingsErr != nil {
+		settings = settingsDefaults
+	}
+	if settingsErr == nil && settings.Exists {
+		memory, memoryErr = loadMemoryStateFromSettings(settings)
+	}
 
 	cfg := cliConfig{
-		apiURL:     strings.TrimRight(cliValue("EUTHERPUNK_URL", appConfig.Agent.APIURL, defaultAPIURL, configExists), "/"),
-		model:      cliValue("EUTHERPUNK_MODEL", appConfig.Agent.Model, defaultModel, configExists),
+		apiURL:     baseAPIURL,
+		model:      baseModel,
 		configPath: appConfig.Path,
 		memory:     memory,
+		settings:   settings,
+	}
+	if settingsErr == nil && settings.Exists {
+		if strings.TrimSpace(os.Getenv("EUTHERPUNK_URL")) == "" {
+			cfg.apiURL = strings.TrimRight(settings.ConnectionURL, "/")
+		}
+		if strings.TrimSpace(os.Getenv("EUTHERPUNK_MODEL")) == "" {
+			cfg.model = settings.Model
+		}
+	}
+	if settingsErr != nil {
+		fmt.Fprintln(os.Stderr, "inställningsvarning:", settingsErr)
 	}
 	if memoryErr != nil {
 		fmt.Fprintln(os.Stderr, "minnesvarning:", memoryErr)
@@ -122,6 +145,7 @@ func doctor(cfg cliConfig) error {
 	fmt.Println("api_url:", cfg.apiURL)
 	fmt.Println("model:", cfg.model)
 	fmt.Println("memory:", cfg.memory.StatusLine())
+	fmt.Println("settings:", cfg.settings.Path)
 	fmt.Println()
 	fmt.Println("status:")
 	return printGet(cfg.apiURL + "/api/eutherpunk/status")
@@ -137,9 +161,12 @@ func assist(cfg cliConfig, initialPrompt string) error {
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
-	editor := newLineEditor(reader)
+	editor := newLineEditor(reader, cfg.settings.Terminal)
 	history := make([]chatMessage, 0, 12)
 	permissions := defaultSessionPermissions()
+	if cfg.settings.Exists {
+		permissions.systemInfo = cfg.settings.SystemInfo
+	}
 	prompt := strings.TrimSpace(initialPrompt)
 
 	for {
@@ -163,14 +190,30 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			prompt = ""
 			continue
 		}
-		if strings.HasPrefix(lowerPrompt, "/memory") {
-			if err := handleMemoryCommand(&cfg.memory, prompt); err != nil {
-				fmt.Fprintln(os.Stderr, "minnesfel:", err)
+		if strings.HasPrefix(lowerPrompt, "/settings") {
+			if err := handleSettingsCommand(&cfg, &permissions, editor, prompt); err != nil {
+				fmt.Fprintln(os.Stderr, "inställningsfel:", err)
 			}
 			prompt = ""
 			continue
 		}
-		if lowerPrompt == "/system" || lowerPrompt == "/system share" {
+		if strings.HasPrefix(lowerPrompt, "/memory") {
+			wasEnabled := cfg.memory.Enabled
+			if err := handleMemoryCommand(&cfg.memory, prompt); err != nil {
+				fmt.Fprintln(os.Stderr, "minnesfel:", err)
+			} else if cfg.settings.Exists && wasEnabled != cfg.memory.Enabled {
+				cfg.settings.MemoryEnabled = cfg.memory.Enabled
+				if err := cfg.settings.Save(); err != nil {
+					fmt.Fprintln(os.Stderr, "inställningsfel:", err)
+				} else {
+					_ = os.Remove(cfg.memory.EnabledPath)
+					fmt.Println("Inställningen är sparad i settings.toml.")
+				}
+			}
+			prompt = ""
+			continue
+		}
+		if lowerPrompt == "/system" || lowerPrompt == "/system share" || lowerPrompt == "/system share full" {
 			report, allowed, err := approvedSystemReport(reader, &permissions)
 			if err != nil {
 				return err
@@ -179,15 +222,37 @@ func assist(cfg cliConfig, initialPrompt string) error {
 				prompt = ""
 				continue
 			}
-			fmt.Println()
-			fmt.Println(report.String())
 			if lowerPrompt == "/system" {
+				fmt.Println()
+				fmt.Println(report.String())
 				fmt.Println()
 				fmt.Println("Informationen stannar lokalt. Använd /system share för att dela den med EutherPunk.")
 				prompt = ""
 				continue
 			}
-			prompt = report.SharedPrompt()
+			full := lowerPrompt == "/system share full"
+			if full {
+				fmt.Println()
+				fmt.Println("FULL SYSTEMRAPPORT")
+				fmt.Println(report.StringForShare(cfg.settings.Privacy, true))
+				fmt.Println()
+				fmt.Print("Detta delar datornamn, användarnamn och arbetskatalog. Fortsätt? [y/N]: ")
+				answer, err := reader.ReadString('\n')
+				if err != nil {
+					return err
+				}
+				switch strings.ToLower(strings.TrimSpace(answer)) {
+				case "y", "yes", "j", "ja":
+				default:
+					fmt.Println("Delningen avbröts.")
+					prompt = ""
+					continue
+				}
+			}
+			fmt.Println()
+			fmt.Println("DETTA DELAS MED MODELLEN")
+			fmt.Println(report.StringForShare(cfg.settings.Privacy, full))
+			prompt = report.SharedPrompt(cfg.settings.Privacy, full)
 		}
 
 		switch lowerPrompt {
@@ -198,9 +263,11 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("Uppåtpil eller Tab accepterar ett giftgrönt kommandoförslag.")
 			fmt.Println("Uppåtpil visar historik när inget förslag syns.")
 			fmt.Println("/memory visar eller ändrar det lokala långtidsminnet.")
+			fmt.Println("/settings visar eller sparar permanenta inställningar.")
 			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
-			fmt.Println("/system share delar rapporten med modellen.")
+			fmt.Println("/system share delar en maskerad rapport med modellen.")
+			fmt.Println("/system share full delar även identifierande fält efter extra godkännande.")
 			fmt.Println("/clear glömmer den lokala samtalstråden.")
 			fmt.Println("/status kontrollerar anslutningen.")
 			fmt.Println("/exit avslutar.")

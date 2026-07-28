@@ -129,8 +129,11 @@ Interactive preview commands:
 /memory
 /memory on|off
 /memory show|path|reload
+/settings
+/settings init|show|path|reload|save
 /system
 /system share
+/system share full
 /clear
 /status
 /exit
@@ -140,9 +143,12 @@ While typing a slash command in an interactive terminal, the closest available
 completion is shown as dim gift-green text. Press Up Arrow or Tab to accept it.
 When no completion is visible, Up Arrow recalls command history.
 
-`/system` keeps the report in the terminal. `/system share` explicitly sends
-the same report to the selected model as chat context. Permissions are
-session-only and reset when the process exits.
+`/system` keeps the complete report in the terminal. `/system share` sends a
+privacy-filtered report to the selected model as chat context; hostname,
+username, and working directory are masked by default. `/system share full`
+shows the exact full report and requires an extra confirmation before sending
+those identifying fields. A `session` permission grant resets when the process
+exits.
 
 Long-term memory is opt-in and stored next to the CLI config as `memory.md`.
 `/memory on` creates a human-readable template and a small enable marker, so
@@ -151,6 +157,40 @@ marker and preserves the Markdown file. The preview never writes memories on
 the model's initiative, caps the file at 32 KiB, and sends it as user-level
 background context rather than as a system instruction or tool authorization.
 Do not store passwords, tokens, private keys, or other secrets in the file.
+
+`/settings init` creates a human-readable `settings.toml` beside `memory.md`.
+It can persist the endpoint, model, safe `off`/`ask` system permission, memory
+state, privacy filters, autocomplete keys, history, and ghost-text color.
+Environment variables still take precedence over the file. Use `/settings
+show` to inspect the active format, edit the file in a text editor, then use
+`/settings reload`. A successful save keeps the prior file as
+`settings.toml.previous`. The settings file deliberately has no password or
+token field.
+
+Example privacy and terminal settings:
+
+```toml
+[privacy]
+share_hostname = false
+share_username = false
+share_working_directory = false
+
+[terminal]
+autocomplete = true
+accept_up_arrow = true
+accept_tab = true
+history = true
+ghost_color = "#5cff5c"
+```
+
+## Authentication status
+
+The portable preview does not currently implement login or store credentials.
+The `X-EutherPunk-Client-Mode: chat-only` request header limits the official
+CLI's behavior but is not authentication and must not be trusted as an access
+control. Until server-side authentication and authorization are added, do not
+consider the public API private: chat and administrative endpoints must be
+protected at the reverse proxy or kept off the public internet.
 
 ## Portable Windows Preview
 

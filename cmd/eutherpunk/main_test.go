@@ -143,6 +143,52 @@ func TestSystemReportDoesNotIncludeSensitiveIdentifiers(t *testing.T) {
 	}
 }
 
+func TestSystemReportShareDefaultsToMaskedIdentifiers(t *testing.T) {
+	report := systemReport{
+		OperatingSystem:  "windows",
+		OSVersion:        "Windows 11 Pro",
+		Architecture:     "amd64",
+		Hostname:         "private-computer",
+		Username:         "private-user",
+		WorkingDirectory: `C:\Private`,
+		LogicalCPUs:      8,
+		CLIVersion:       "test",
+	}
+	basic := report.StringForShare(privacySettings{}, false)
+	for _, private := range []string{"private-computer", "private-user", `C:\Private`} {
+		if strings.Contains(basic, private) {
+			t.Fatalf("basic share contains %q: %s", private, basic)
+		}
+	}
+	if count := strings.Count(basic, "(maskerat)"); count != 3 {
+		t.Fatalf("basic share has %d masked fields: %s", count, basic)
+	}
+
+	full := report.StringForShare(privacySettings{}, true)
+	for _, expected := range []string{"private-computer", "private-user", `C:\Private`} {
+		if !strings.Contains(full, expected) {
+			t.Fatalf("full share missing %q: %s", expected, full)
+		}
+	}
+}
+
+func TestSystemReportShareHonorsPrivacySettings(t *testing.T) {
+	report := systemReport{
+		Hostname:         "shared-computer",
+		Username:         "private-user",
+		WorkingDirectory: `C:\Private`,
+	}
+	text := report.StringForShare(privacySettings{ShareHostname: true}, false)
+	if !strings.Contains(text, "shared-computer") {
+		t.Fatalf("configured hostname missing: %s", text)
+	}
+	for _, private := range []string{"private-user", `C:\Private`} {
+		if strings.Contains(text, private) {
+			t.Fatalf("basic share contains %q: %s", private, text)
+		}
+	}
+}
+
 func TestCommandSuggestion(t *testing.T) {
 	tests := map[string]string{
 		"":                      "",
@@ -152,6 +198,8 @@ func TestCommandSuggestion(t *testing.T) {
 		"/permissions s":        "/permissions system ask",
 		"/permissions system s": "/permissions system session",
 		"/system s":             "/system share",
+		"/system share f":       "/system share full",
+		"/settings r":           "/settings reload",
 		"/unknown":              "",
 	}
 	for input, expected := range tests {
@@ -235,5 +283,138 @@ func TestMemoryRejectsOversizedFile(t *testing.T) {
 	}
 	if state.Enabled || state.ClientContext() != "" {
 		t.Fatal("oversized memory must not be sent")
+	}
+}
+
+func TestCLISettingsRoundTripAndBackup(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := defaultCLISettings(configPath, "https://example.invalid", "model-a", false)
+	settings.MemoryEnabled = true
+	settings.Privacy.ShareHostname = true
+	settings.Terminal.GhostColor = "#12abef"
+	if err := settings.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadCLISettings(defaultCLISettings(configPath, "https://wrong.invalid", "wrong", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Exists || loaded.ConnectionURL != "https://example.invalid" ||
+		loaded.Model != "model-a" || !loaded.MemoryEnabled ||
+		!loaded.Privacy.ShareHostname || loaded.Terminal.GhostColor != "#12abef" {
+		t.Fatalf("loaded settings = %#v", loaded)
+	}
+
+	settings.Model = "model-b"
+	if err := settings.Save(); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(settings.Path + ".previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(backup), `model = "model-a"`) {
+		t.Fatalf("unexpected backup: %s", backup)
+	}
+}
+
+func TestCLISettingsRejectMalformedValues(t *testing.T) {
+	tests := map[string]string{
+		"string": `profile = portable`,
+		"bool":   `enabled = perhaps`,
+		"int":    `max_bytes = many`,
+	}
+	for name, replacement := range tests {
+		t.Run(name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			settings := defaultCLISettings(configPath, "https://example.invalid", "model", false)
+			raw := settings.TOML()
+			switch name {
+			case "string":
+				raw = strings.Replace(raw, `profile = "portable"`, replacement, 1)
+			case "bool":
+				raw = strings.Replace(raw, "enabled = false", replacement, 1)
+			case "int":
+				raw = strings.Replace(raw, "max_bytes = 32768", replacement, 1)
+			}
+			if err := os.WriteFile(settings.Path, []byte(raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadCLISettings(settings); err == nil {
+				t.Fatalf("expected malformed %s to fail", name)
+			}
+		})
+	}
+}
+
+func TestCLISettingsRejectUnsafeOrUnsupportedValues(t *testing.T) {
+	tests := map[string]func(*cliSettings){
+		"memory path": func(settings *cliSettings) { settings.MemoryFile = "../memory.md" },
+		"memory max":  func(settings *cliSettings) { settings.MemoryMaxBytes = maxMemoryBytes + 1 },
+		"mode":        func(settings *cliSettings) { settings.Mode = "tools" },
+		"permission":  func(settings *cliSettings) { settings.SystemInfo = permissionSession },
+		"color":       func(settings *cliSettings) { settings.Terminal.GhostColor = "green" },
+		"url":         func(settings *cliSettings) { settings.ConnectionURL = "file:///secret" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			settings := defaultCLISettings(filepath.Join(t.TempDir(), "config.toml"), "https://example.invalid", "model", false)
+			mutate(&settings)
+			if err := settings.Validate(); err == nil {
+				t.Fatalf("expected %s to fail validation", name)
+			}
+		})
+	}
+}
+
+func TestSettingsInitMigratesLegacyMemoryMarker(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	memory, err := loadMemoryState(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cliConfig{
+		apiURL:   "https://example.invalid",
+		model:    "model",
+		memory:   memory,
+		settings: defaultCLISettings(configPath, "https://example.invalid", "model", true),
+	}
+	permissions := defaultSessionPermissions()
+	editor := newLineEditor(nil, cfg.settings.Terminal)
+	if err := handleSettingsCommand(&cfg, &permissions, editor, "/settings init"); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.settings.Exists || !cfg.settings.MemoryEnabled {
+		t.Fatalf("settings were not migrated: %#v", cfg.settings)
+	}
+	if _, err := os.Stat(memory.EnabledPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy marker remains: %v", err)
+	}
+}
+
+func TestSettingsReloadPreservesEnvironmentOverrides(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := defaultCLISettings(configPath, "https://settings.invalid", "settings-model", false)
+	if err := settings.Save(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EUTHERPUNK_URL", "https://environment.invalid")
+	t.Setenv("EUTHERPUNK_MODEL", "environment-model")
+	cfg := cliConfig{
+		apiURL:   "https://environment.invalid",
+		model:    "environment-model",
+		settings: settings,
+	}
+	permissions := defaultSessionPermissions()
+	editor := newLineEditor(nil, settings.Terminal)
+	if err := applyCLISettings(&cfg, &permissions, editor, settings); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.apiURL != "https://environment.invalid" || cfg.model != "environment-model" {
+		t.Fatalf("environment override lost: %#v", cfg)
 	}
 }

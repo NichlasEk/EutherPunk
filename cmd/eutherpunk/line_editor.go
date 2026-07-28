@@ -6,16 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"golang.org/x/term"
 )
 
-const (
-	ghostGreen = "\x1b[2;38;2;92;255;92m"
-	ansiReset  = "\x1b[0m"
-)
+const ansiReset = "\x1b[0m"
 
 var availableCommands = []string{
 	"/memory",
@@ -24,6 +22,12 @@ var availableCommands = []string{
 	"/memory path",
 	"/memory reload",
 	"/memory show",
+	"/settings",
+	"/settings init",
+	"/settings path",
+	"/settings reload",
+	"/settings save",
+	"/settings show",
 	"/permissions",
 	"/permissions reset",
 	"/permissions system ask",
@@ -31,6 +35,7 @@ var availableCommands = []string{
 	"/permissions system session",
 	"/system",
 	"/system share",
+	"/system share full",
 	"/status",
 	"/clear",
 	"/help",
@@ -38,12 +43,17 @@ var availableCommands = []string{
 }
 
 type lineEditor struct {
-	reader  *bufio.Reader
-	history []string
+	reader   *bufio.Reader
+	history  []string
+	terminal terminalSettings
 }
 
-func newLineEditor(reader *bufio.Reader) *lineEditor {
-	return &lineEditor{reader: reader}
+func newLineEditor(reader *bufio.Reader, settings terminalSettings) *lineEditor {
+	return &lineEditor{reader: reader, terminal: settings}
+}
+
+func (editor *lineEditor) ApplySettings(settings terminalSettings) {
+	editor.terminal = settings
 }
 
 func (editor *lineEditor) ReadLine(prompt string) (string, error) {
@@ -64,7 +74,7 @@ func (editor *lineEditor) ReadLine(prompt string) (string, error) {
 
 	line := ""
 	historyIndex := len(editor.history)
-	if err := redrawInput(prompt, line); err != nil {
+	if err := editor.redrawInput(prompt, line); err != nil {
 		return "", err
 	}
 
@@ -78,7 +88,7 @@ func (editor *lineEditor) ReadLine(prompt string) (string, error) {
 			if _, err := fmt.Print("\r\n"); err != nil {
 				return "", err
 			}
-			if strings.TrimSpace(line) != "" {
+			if editor.terminal.History && strings.TrimSpace(line) != "" {
 				editor.history = append(editor.history, line)
 			}
 			return line, nil
@@ -94,10 +104,12 @@ func (editor *lineEditor) ReadLine(prompt string) (string, error) {
 			line = removeLastRune(line)
 			historyIndex = len(editor.history)
 		case "\t", "up":
-			if suggestion := commandSuggestion(line); suggestion != "" {
+			acceptSuggestion := (key == "\t" && editor.terminal.AcceptTab) ||
+				(key == "up" && editor.terminal.AcceptUpArrow)
+			if suggestion := editor.suggestion(line); acceptSuggestion && suggestion != "" {
 				line = suggestion
 				historyIndex = len(editor.history)
-			} else if key == "up" && len(editor.history) > 0 {
+			} else if key == "up" && editor.terminal.History && len(editor.history) > 0 {
 				if historyIndex > 0 {
 					historyIndex--
 				}
@@ -117,7 +129,7 @@ func (editor *lineEditor) ReadLine(prompt string) (string, error) {
 			line += key
 			historyIndex = len(editor.history)
 		}
-		if err := redrawInput(prompt, line); err != nil {
+		if err := editor.redrawInput(prompt, line); err != nil {
 			return "", err
 		}
 	}
@@ -196,8 +208,8 @@ func utf8EncodedRuneSize(first byte) int {
 	}
 }
 
-func redrawInput(prompt, line string) error {
-	suggestion := commandSuggestion(line)
+func (editor *lineEditor) redrawInput(prompt, line string) error {
+	suggestion := editor.suggestion(line)
 	suffix := ""
 	if suggestion != "" && len(line) <= len(suggestion) {
 		suffix = suggestion[len(line):]
@@ -208,11 +220,28 @@ func redrawInput(prompt, line string) error {
 	if suffix == "" {
 		return nil
 	}
-	if _, err := fmt.Printf("%s%s%s", ghostGreen, suffix, ansiReset); err != nil {
+	if _, err := fmt.Printf("%s%s%s", ghostColorANSI(editor.terminal.GhostColor), suffix, ansiReset); err != nil {
 		return err
 	}
 	_, err := fmt.Printf("\x1b[%dD", utf8.RuneCountInString(suffix))
 	return err
+}
+
+func (editor *lineEditor) suggestion(input string) string {
+	if !editor.terminal.Autocomplete {
+		return ""
+	}
+	return commandSuggestion(input)
+}
+
+func ghostColorANSI(value string) string {
+	if !validHexColor(value) {
+		value = "#5cff5c"
+	}
+	red, _ := strconv.ParseUint(value[1:3], 16, 8)
+	green, _ := strconv.ParseUint(value[3:5], 16, 8)
+	blue, _ := strconv.ParseUint(value[5:7], 16, 8)
+	return fmt.Sprintf("\x1b[2;38;2;%d;%d;%dm", red, green, blue)
 }
 
 func commandSuggestion(input string) string {

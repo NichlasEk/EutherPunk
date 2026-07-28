@@ -45,6 +45,9 @@ func collectSystemReport() (systemReport, error) {
 func platformVersion() string {
 	switch runtime.GOOS {
 	case "windows":
+		if product := windowsProductName(); product != "" {
+			return product
+		}
 		return fixedCommandOutput("cmd.exe", "/d", "/c", "ver")
 	case "darwin":
 		return fixedCommandOutput("sw_vers", "-productVersion")
@@ -85,11 +88,27 @@ func (report systemReport) String() string {
 	return strings.Join(lines, "\n")
 }
 
-func (report systemReport) SharedPrompt() string {
+func (report systemReport) StringForShare(privacy privacySettings, full bool) string {
+	shared := report
+	if !full {
+		if !privacy.ShareHostname {
+			shared.Hostname = "(maskerat)"
+		}
+		if !privacy.ShareUsername {
+			shared.Username = "(maskerat)"
+		}
+		if !privacy.ShareWorkingDirectory {
+			shared.WorkingDirectory = "(maskerat)"
+		}
+	}
+	return shared.String()
+}
+
+func (report systemReport) SharedPrompt(privacy privacySettings, full bool) string {
 	return fmt.Sprintf(
 		"Jag har uttryckligen valt att dela följande lokalt insamlade systeminformation med dig. "+
 			"Använd den som kontext men föreslå inga ändringar utan att fråga mig först.\n\n%s",
-		report.String(),
+		report.StringForShare(privacy, full),
 	)
 }
 

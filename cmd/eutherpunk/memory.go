@@ -37,6 +37,7 @@ Spara aldrig lösenord, tokens, privata nycklar eller andra hemligheter här.
 type memoryState struct {
 	Path        string
 	EnabledPath string
+	MaxBytes    int
 	Enabled     bool
 	Content     string
 }
@@ -46,6 +47,7 @@ func loadMemoryState(configPath string) (memoryState, error) {
 	state := memoryState{
 		Path:        filepath.Join(dir, "memory.md"),
 		EnabledPath: filepath.Join(dir, "memory.enabled"),
+		MaxBytes:    maxMemoryBytes,
 	}
 	if _, err := os.Stat(state.EnabledPath); errors.Is(err, os.ErrNotExist) {
 		return state, nil
@@ -56,6 +58,23 @@ func loadMemoryState(configPath string) (memoryState, error) {
 	if err := state.Reload(); err != nil {
 		state.Enabled = false
 		state.Content = ""
+		return state, err
+	}
+	return state, nil
+}
+
+func loadMemoryStateFromSettings(settings cliSettings) (memoryState, error) {
+	state := memoryState{
+		Path:        filepath.Join(filepath.Dir(settings.Path), settings.MemoryFile),
+		EnabledPath: filepath.Join(filepath.Dir(settings.Path), "memory.enabled"),
+		MaxBytes:    settings.MemoryMaxBytes,
+		Enabled:     settings.MemoryEnabled,
+	}
+	if !state.Enabled {
+		return state, nil
+	}
+	if err := state.Reload(); err != nil {
+		state.Enabled = false
 		return state, err
 	}
 	return state, nil
@@ -101,8 +120,12 @@ func (state *memoryState) Reload() error {
 	if err != nil {
 		return err
 	}
-	if info.Size() > maxMemoryBytes {
-		return fmt.Errorf("memory.md är %d byte; gränsen är %d byte", info.Size(), maxMemoryBytes)
+	limit := state.MaxBytes
+	if limit < 1 || limit > maxMemoryBytes {
+		limit = maxMemoryBytes
+	}
+	if info.Size() > int64(limit) {
+		return fmt.Errorf("memory.md är %d byte; gränsen är %d byte", info.Size(), limit)
 	}
 	raw, err := os.ReadFile(state.Path)
 	if err != nil {
@@ -176,7 +199,7 @@ func handleMemoryCommand(state *memoryState, command string) error {
 func printMemoryStatus(state memoryState) {
 	fmt.Println("MINNE", state.StatusLine())
 	fmt.Println("Fil:", state.Path)
-	fmt.Println("Maxstorlek:", maxMemoryBytes, "byte")
+	fmt.Println("Maxstorlek:", state.MaxBytes, "byte")
 	fmt.Println("Modellen kan inte skriva minnet i denna version.")
 }
 
