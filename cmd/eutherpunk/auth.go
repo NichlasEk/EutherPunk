@@ -158,11 +158,20 @@ type authErrorResponse struct {
 	Status int
 	Code   string
 	Text   string
+	Path   string
 }
 
 func (err *authErrorResponse) Error() string {
 	if err.Text != "" {
 		return fmt.Sprintf("auth %d %s: %s", err.Status, err.Code, err.Text)
+	}
+	if err.Code == "" {
+		return fmt.Sprintf(
+			"auth %d %s från %s; kontrollera connection.url med 'eutherpunk doctor'",
+			err.Status,
+			http.StatusText(err.Status),
+			err.Path,
+		)
 	}
 	return fmt.Sprintf("auth %d: %s", err.Status, err.Code)
 }
@@ -196,7 +205,12 @@ func (cfg *cliConfig) authJSON(method, path string, input any, bearer string, ou
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var remote authError
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&remote)
-		return &authErrorResponse{Status: resp.StatusCode, Code: remote.Error, Text: remote.Message}
+		return &authErrorResponse{
+			Status: resp.StatusCode,
+			Code:   remote.Error,
+			Text:   remote.Message,
+			Path:   cfg.apiURL + path,
+		}
 	}
 	if output == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)

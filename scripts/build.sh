@@ -8,13 +8,11 @@ GOARCH_VALUE="${GOARCH:-amd64}"
 EXT=""
 CLI_ONLY="${EUTHERPUNK_CLI_ONLY:-0}"
 VERSION="${EUTHERPUNK_VERSION:-$(git -C "$ROOT" describe --always --dirty 2>/dev/null || printf dev)}"
-DEFAULT_URL="${EUTHERPUNK_DEFAULT_URL:-}"
-DEFAULT_MODEL="${EUTHERPUNK_DEFAULT_MODEL:-}"
+DEFAULT_URL="${EUTHERPUNK_DEFAULT_URL:-https://apothictech.se}"
+DEFAULT_MODEL="${EUTHERPUNK_DEFAULT_MODEL:-supergemma4-26b-free:latest}"
 
 if [ "$GOOS_VALUE" = "windows" ]; then
   EXT=".exe"
-  DEFAULT_URL="${DEFAULT_URL:-https://apothictech.se}"
-  DEFAULT_MODEL="${DEFAULT_MODEL:-supergemma4-26b-free:latest}"
 fi
 
 mkdir -p "$OUT"

@@ -212,7 +212,14 @@ this requirement. Unsafe browser methods also require a same-origin
 `Origin`/`Referer`. The status page, CLI download and device-flow bootstrap are
 public; chat and all settings, conversation, media and admin APIs are protected.
 
-## Portable Windows Preview
+## Portable CLI Preview
+
+Release builds for both Linux and Windows default to
+`https://apothictech.se`, which works from the LAN and remotely. A local
+`settings.toml` or `EUTHERPUNK_URL` environment variable can still override
+the endpoint.
+
+### Windows
 
 Build only the Windows CLI from Linux:
 
