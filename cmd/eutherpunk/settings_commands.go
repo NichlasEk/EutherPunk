@@ -66,6 +66,11 @@ func captureRuntimeSettings(cfg *cliConfig, permissions *sessionPermissions) {
 	} else {
 		cfg.settings.SystemInfo = permissionAsk
 	}
+	if permissions.files == permissionOff {
+		cfg.settings.Files = permissionOff
+	} else {
+		cfg.settings.Files = permissionAsk
+	}
 	cfg.settings.MemoryEnabled = cfg.memory.Enabled
 	cfg.settings.MemoryFile = filepath.Base(cfg.memory.Path)
 	cfg.settings.MemoryMaxBytes = cfg.memory.MaxBytes
@@ -90,6 +95,7 @@ func applyCLISettings(
 	cfg.memory = memory
 	cfg.settings = settings
 	permissions.systemInfo = settings.SystemInfo
+	permissions.files = settings.Files
 	editor.ApplySettings(settings.Terminal)
 	return nil
 }
@@ -105,6 +111,7 @@ func printSettingsStatus(settings cliSettings) {
 	fmt.Println("Modell:", settings.Model)
 	fmt.Println("Läge:", settings.Mode)
 	fmt.Println("Systeminformation:", strings.ToUpper(string(settings.SystemInfo)))
+	fmt.Println("Arbetsytefiler:", strings.ToUpper(string(settings.Files)))
 	fmt.Println("Minne:", onOff(settings.MemoryEnabled))
 	fmt.Println("Autocomplete:", onOff(settings.Terminal.Autocomplete))
 	fmt.Println("Datornamn delas:", onOff(settings.Privacy.ShareHostname))

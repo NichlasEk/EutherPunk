@@ -16,10 +16,11 @@ const (
 
 type sessionPermissions struct {
 	systemInfo permissionLevel
+	files      permissionLevel
 }
 
 func defaultSessionPermissions() sessionPermissions {
-	return sessionPermissions{systemInfo: permissionAsk}
+	return sessionPermissions{systemInfo: permissionAsk, files: permissionAsk}
 }
 
 func handlePermissionsCommand(permissions *sessionPermissions, command string) {
@@ -39,6 +40,14 @@ func handlePermissionsCommand(permissions *sessionPermissions, command string) {
 		}
 		permissions.systemInfo = level
 		fmt.Printf("Systeminformation: %s\n", strings.ToUpper(string(level)))
+	case len(fields) == 3 && (fields[1] == "files" || fields[1] == "filer"):
+		level, ok := parsePermissionLevel(fields[2])
+		if !ok {
+			printPermissionsHelp()
+			return
+		}
+		permissions.files = level
+		fmt.Printf("Arbetsytefiler: %s\n", strings.ToUpper(string(level)))
 	default:
 		printPermissionsHelp()
 	}
@@ -60,8 +69,8 @@ func parsePermissionLevel(value string) (permissionLevel, bool) {
 func printPermissions(permissions sessionPermissions) {
 	fmt.Println("BEHÖRIGHETER")
 	fmt.Printf("Systeminformation    %s\n", strings.ToUpper(string(permissions.systemInfo)))
-	fmt.Println("Läsa filer           OFF (inte tillgängligt)")
-	fmt.Println("Ändra filer          OFF (inte tillgängligt)")
+	fmt.Printf("Läsa arbetsytefiler  %s\n", strings.ToUpper(string(permissions.files)))
+	fmt.Println("Ändra arbetsytefiler ALLTID FRÅGA")
 	fmt.Println("Köra kommandon        OFF (inte tillgängligt)")
 	fmt.Println("Administratör         NEVER")
 	fmt.Println()
@@ -72,6 +81,7 @@ func printPermissionsHelp() {
 	fmt.Println("Användning:")
 	fmt.Println("  /permissions")
 	fmt.Println("  /permissions system off|ask|session")
+	fmt.Println("  /permissions files off|ask|session")
 	fmt.Println("  /permissions reset")
 }
 

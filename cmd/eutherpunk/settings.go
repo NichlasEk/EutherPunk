@@ -37,6 +37,7 @@ type cliSettings struct {
 	Language       string
 	Mode           string
 	SystemInfo     permissionLevel
+	Files          permissionLevel
 	MemoryEnabled  bool
 	MemoryFile     string
 	MemoryMaxBytes int
@@ -54,6 +55,7 @@ func defaultCLISettings(configPath, apiURL, model string, memoryEnabled bool) cl
 		Language:       "sv",
 		Mode:           "chat",
 		SystemInfo:     permissionAsk,
+		Files:          permissionAsk,
 		MemoryEnabled:  memoryEnabled,
 		MemoryFile:     "memory.md",
 		MemoryMaxBytes: maxMemoryBytes,
@@ -141,14 +143,20 @@ func (settings *cliSettings) set(section, key, raw string) error {
 			return fmt.Errorf("okänd inställning [agent].%s", key)
 		}
 	case "permissions":
-		if key != "system_info" {
+		var destination *permissionLevel
+		switch key {
+		case "system_info":
+			destination = &settings.SystemInfo
+		case "files":
+			destination = &settings.Files
+		default:
 			return fmt.Errorf("okänd inställning [permissions].%s", key)
 		}
 		var value string
 		if err := setSettingsString(raw, &value); err != nil {
 			return err
 		}
-		settings.SystemInfo = permissionLevel(value)
+		*destination = permissionLevel(value)
 	case "memory":
 		switch key {
 		case "enabled":
@@ -208,6 +216,9 @@ func (settings cliSettings) Validate() error {
 	}
 	if settings.SystemInfo != permissionOff && settings.SystemInfo != permissionAsk {
 		return errors.New("[permissions].system_info måste vara \"off\" eller \"ask\"")
+	}
+	if settings.Files != permissionOff && settings.Files != permissionAsk {
+		return errors.New("[permissions].files måste vara \"off\" eller \"ask\"")
 	}
 	if settings.MemoryMaxBytes < 1 || settings.MemoryMaxBytes > maxMemoryBytes {
 		return fmt.Errorf("[memory].max_bytes måste vara 1-%d", maxMemoryBytes)
@@ -293,6 +304,7 @@ mode = %s
 
 [permissions]
 system_info = %s
+files = %s
 
 [memory]
 enabled = %t
@@ -318,6 +330,7 @@ ghost_color = %s
 		strconv.Quote(settings.Language),
 		strconv.Quote(settings.Mode),
 		strconv.Quote(string(settings.SystemInfo)),
+		strconv.Quote(string(settings.Files)),
 		settings.MemoryEnabled,
 		strconv.Quote(settings.MemoryFile),
 		settings.MemoryMaxBytes,

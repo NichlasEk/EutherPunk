@@ -2,11 +2,51 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Format == nil {
+			t.Fatal("workspace request did not include a JSON schema")
+		}
+		if request.Options["num_ctx"] != float64(8192) {
+			t.Fatalf("num_ctx = %#v", request.Options["num_ctx"])
+		}
+		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+			Message: ollamaMessage{
+				Role: "assistant",
+				Content: `{"message":"klart","files":[` +
+					`{"path":"main.lua","content":"print('hej')\n"}]}`,
+			},
+			Done: true,
+		})
+	}))
+	defer ollama.Close()
+
+	message, files, err := askWorkspaceOllama(
+		context.Background(),
+		ollama.URL,
+		"test-model",
+		"system",
+		[]ollamaMessage{{Role: "user", Content: "skapa"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message != "klart" || len(files) != 1 || files[0].Path != "main.lua" {
+		t.Fatalf("message=%q, files=%#v", message, files)
+	}
+}
 
 func TestRequestUserUsesAuthenticatedPrincipalNotHeaders(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "/", nil)

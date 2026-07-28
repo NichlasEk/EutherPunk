@@ -115,10 +115,10 @@ go run ./cmd/eutherpunk
 go run ./cmd/eutherpunk assist
 ```
 
-The first portable CLI preview is deliberately chat-only. It does not inspect
-files, execute local commands, install software, or request administrator
-access. The first local tool can collect a small system report after approval;
-it does not inspect arbitrary files or collect IP addresses, serial numbers, or
+The portable CLI remains deliberately limited. It does not inspect files
+outside an explicitly selected workspace, execute local commands, install
+software, or request administrator access. The system tool can collect a small
+report after approval; it does not collect IP addresses, serial numbers, or
 machine IDs.
 
 Interactive preview commands:
@@ -126,6 +126,10 @@ Interactive preview commands:
 ```text
 /permissions
 /permissions system off|ask|session
+/permissions files off|ask|session
+/workspace
+/workspace init <directory>
+/workspace use <directory>
 /memory
 /memory on|off
 /memory show|path|reload
@@ -152,6 +156,22 @@ username, and working directory are masked by default. `/system share full`
 shows the exact full report and requires an extra confirmation before sending
 those identifying fields. A `session` permission grant resets when the process
 exits.
+
+### Local coding workspace
+
+`/workspace init <directory>` creates and selects a new project directory;
+`/workspace use <directory>` selects an existing one. The home directory and
+filesystem root cannot be selected as a workspace. EutherPunk may snapshot at
+most 32 UTF-8 text files (48 KiB total) after an `ask` or `session` approval.
+It does not follow symlinks and skips `.git`, dependency/build directories,
+binary files, `.env`, credentials, private keys and other likely secret files.
+
+The model can propose complete file contents using a strictly parsed local
+protocol. The CLI validates every relative path, shows a preview, and asks
+again before writing. Writes are atomic and an overwritten file is preserved
+as `<name>.eutherpunk.previous`. Deletion and arbitrary shell execution are not
+available in this version. This is enough to create and revise small projects;
+the user still runs or builds them separately.
 
 Long-term memory is opt-in and stored next to the CLI config as `memory.md`.
 `/memory on` creates a human-readable template and a small enable marker, so

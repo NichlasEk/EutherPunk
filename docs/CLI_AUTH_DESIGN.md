@@ -63,8 +63,9 @@ reverse-proxy request limits and monitoring.
 
 ## Deliberate boundaries
 
-This authenticates access to EutherPunk; it does not grant the local CLI file,
-shell or administrator rights. Those remain disabled in the preview. An
+This authenticates access to EutherPunk; it does not grant local file, shell or
+administrator rights. A separate local workspace permission may grant bounded
+text-file access, but the bearer token itself never does so. An
 EutherID browser session proves who approved the client, not that every later
 local action is safe. Future tools therefore need their own visible
 permissions and per-action approval rules.

@@ -29,6 +29,7 @@ type cliConfig struct {
 	memory      memoryState
 	settings    cliSettings
 	credentials authCredentials
+	workspace   workspaceState
 }
 
 type chatMessage struct {
@@ -37,16 +38,18 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Message       string        `json:"message,omitempty"`
-	Model         string        `json:"model,omitempty"`
-	Messages      []chatMessage `json:"messages,omitempty"`
-	ClientContext string        `json:"client_context,omitempty"`
+	Message        string        `json:"message,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Messages       []chatMessage `json:"messages,omitempty"`
+	ClientContext  string        `json:"client_context,omitempty"`
+	LocalWorkspace bool          `json:"local_workspace,omitempty"`
 }
 
 type chatResponse struct {
-	Model   string `json:"model"`
-	Message string `json:"message"`
-	Error   string `json:"error,omitempty"`
+	Model   string          `json:"model"`
+	Message string          `json:"message"`
+	Files   []workspaceFile `json:"files,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }
 
 type streamChunk struct {
@@ -149,7 +152,7 @@ func main() {
 func doctor(cfg cliConfig) error {
 	fmt.Println("EutherPunk CLI", version)
 	fmt.Println("mode: portable safe preview")
-	fmt.Println("local_access: system-info (ask); files and shell disabled")
+	fmt.Println("local_access: system-info and explicit workspace files (ask); shell disabled")
 	fmt.Println("config:", cfg.configPath)
 	fmt.Println("api_url:", cfg.apiURL)
 	fmt.Println("model:", cfg.model)
@@ -165,8 +168,9 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		return err
 	}
 	fmt.Printf("EutherPunk %s\n", version)
-	fmt.Println("Försiktig förhandsversion: chatt och godkänd systeminformation.")
-	fmt.Println("CLI:t kan inte läsa dina filer, köra valfria kommandon eller ändra datorn.")
+	fmt.Println("Försiktig förhandsversion: chatt, systeminformation och avgränsade kodarbetsytor.")
+	fmt.Println("CLI:t kan bara läsa vald arbetsyta och frågar alltid innan filer ändras.")
+	fmt.Println("Valfria kommandon och administratörsåtkomst är avstängda.")
 	fmt.Println("Skriv /help för hjälp eller /exit för att avsluta.")
 	fmt.Printf("Modell: %s\n\n", cfg.model)
 	fmt.Println("Minne:", cfg.memory.StatusLine())
@@ -178,6 +182,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 	permissions := defaultSessionPermissions()
 	if cfg.settings.Exists {
 		permissions.systemInfo = cfg.settings.SystemInfo
+		permissions.files = cfg.settings.Files
 	}
 	prompt := strings.TrimSpace(initialPrompt)
 
@@ -199,6 +204,13 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		lowerPrompt := strings.ToLower(strings.TrimSpace(prompt))
 		if strings.HasPrefix(lowerPrompt, "/permissions") {
 			handlePermissionsCommand(&permissions, prompt)
+			prompt = ""
+			continue
+		}
+		if strings.HasPrefix(lowerPrompt, "/workspace") {
+			if err := handleWorkspaceCommand(&cfg.workspace, prompt); err != nil {
+				fmt.Fprintln(os.Stderr, "arbetsytefel:", err)
+			}
 			prompt = ""
 			continue
 		}
@@ -277,6 +289,8 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("/memory visar eller ändrar det lokala långtidsminnet.")
 			fmt.Println("/settings visar eller sparar permanenta inställningar.")
 			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
+			fmt.Println("/workspace init <katalog> skapar och väljer en avgränsad kodarbetsyta.")
+			fmt.Println("/workspace use <katalog> väljer en befintlig kodarbetsyta.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
 			fmt.Println("/system share delar en maskerad rapport med modellen.")
 			fmt.Println("/system share full delar även identifierande fält efter extra godkännande.")
@@ -321,7 +335,13 @@ func assist(cfg cliConfig, initialPrompt string) error {
 
 		history = append(history, chatMessage{Role: "user", Content: prompt})
 		fmt.Print("eutherpunk> ")
-		answer, err := streamChat(cfg, trimHistory(history), os.Stdout)
+		var answer string
+		var err error
+		if cfg.workspace.Root != "" {
+			answer, err = workspaceChat(cfg, trimHistory(history), reader, &permissions, os.Stdout)
+		} else {
+			answer, err = streamChat(cfg, trimHistory(history), os.Stdout)
+		}
 		if err != nil {
 			fmt.Println()
 			fmt.Fprintln(os.Stderr, "anslutningsfel:", err)

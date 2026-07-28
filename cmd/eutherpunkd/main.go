@@ -77,12 +77,13 @@ type serverConfig struct {
 }
 
 type chatRequest struct {
-	Message       string        `json:"message"`
-	Model         string        `json:"model,omitempty"`
-	System        string        `json:"system,omitempty"`
-	ClientContext string        `json:"client_context,omitempty"`
-	Images        []string      `json:"images,omitempty"`
-	Messages      []chatMessage `json:"messages,omitempty"`
+	Message        string        `json:"message"`
+	Model          string        `json:"model,omitempty"`
+	System         string        `json:"system,omitempty"`
+	ClientContext  string        `json:"client_context,omitempty"`
+	LocalWorkspace bool          `json:"local_workspace,omitempty"`
+	Images         []string      `json:"images,omitempty"`
+	Messages       []chatMessage `json:"messages,omitempty"`
 }
 
 type promptSettings struct {
@@ -249,8 +250,14 @@ type imageJob struct {
 }
 
 type chatResponse struct {
-	Model   string `json:"model"`
-	Message string `json:"message"`
+	Model   string                  `json:"model"`
+	Message string                  `json:"message"`
+	Files   []workspaceResponseFile `json:"files,omitempty"`
+}
+
+type workspaceResponseFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 type streamChunk struct {
@@ -267,6 +274,7 @@ type ollamaChatRequest struct {
 	Messages  []ollamaMessage `json:"messages"`
 	Options   map[string]any  `json:"options,omitempty"`
 	KeepAlive any             `json:"keep_alive,omitempty"`
+	Format    any             `json:"format,omitempty"`
 }
 
 type ollamaMessage struct {
@@ -710,7 +718,14 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		}
 
 		var answer string
-		if visionRequest {
+		var workspaceFiles []workspaceResponseFile
+		principal, _ := principalFromContext(r.Context())
+		workspaceRequest := req.LocalWorkspace && principal.AuthMode == "cli_token" && !visionRequest
+		if workspaceRequest {
+			answer, workspaceFiles, err = askWorkspaceOllama(
+				r.Context(), cfg.ollamaURL, model, system, messages,
+			)
+		} else if visionRequest {
 			answer, err = askVisionOllama(r.Context(), cfg, prompts, system, messages)
 		} else {
 			answer, err = askOllama(r.Context(), cfg.ollamaURL, model, system, messages)
@@ -719,7 +734,9 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, chatResponse{Model: model, Message: answer})
+		writeJSON(w, http.StatusOK, chatResponse{
+			Model: model, Message: answer, Files: workspaceFiles,
+		})
 	}
 }
 
@@ -2073,6 +2090,96 @@ func askOllama(ctx context.Context, ollamaURL, model, system string, messages []
 		return "", errors.New(out.Error)
 	}
 	return out.Message.Content, nil
+}
+
+func askWorkspaceOllama(
+	ctx context.Context,
+	ollamaURL, model, system string,
+	messages []ollamaMessage,
+) (string, []workspaceResponseFile, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	system += `
+
+Du hjälper en lokal CLI-kodarbetsyta. Svara som JSON enligt det givna schemat.
+"message" är en kort förklaring till användaren. "files" innehåller endast
+kompletta filer som behöver skapas eller ersättas. Varje path måste vara relativ.
+Skicka aldrig markdown-kodstaket, ofullständiga filer, hemligheter eller fler
+filer än uppgiften kräver. Om inga filer behövs ska files vara en tom lista.`
+	format := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"message": map[string]any{"type": "string"},
+			"files": map[string]any{
+				"type":     "array",
+				"maxItems": 16,
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":    map[string]any{"type": "string"},
+						"content": map[string]any{"type": "string"},
+					},
+					"required": []string{"path", "content"},
+				},
+			},
+		},
+		"required": []string{"message", "files"},
+	}
+	payload := ollamaChatRequest{
+		Model:    model,
+		Stream:   false,
+		Messages: append([]ollamaMessage{{Role: "system", Content: system}}, messages...),
+		Format:   format,
+		Options: map[string]any{
+			"num_ctx":     8192,
+			"num_predict": 6144,
+			"temperature": 0.1,
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, ollamaURL+"/api/chat", bytes.NewReader(raw))
+	if err != nil {
+		return "", nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return "", nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", nil, fmt.Errorf("ollama returned %s: %s", resp.Status, string(body))
+	}
+	var out ollamaChatResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", nil, err
+	}
+	if out.Error != "" {
+		return "", nil, errors.New(out.Error)
+	}
+	var workspace struct {
+		Message string                  `json:"message"`
+		Files   []workspaceResponseFile `json:"files"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(out.Message.Content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&workspace); err != nil {
+		return "", nil, fmt.Errorf("decode workspace model response: %w", err)
+	}
+	if len(workspace.Files) > 16 {
+		return "", nil, errors.New("workspace model proposed too many files")
+	}
+	return workspace.Message, workspace.Files, nil
 }
 
 func askVisionOllama(ctx context.Context, cfg serverConfig, prompts promptSettings, system string, messages []ollamaMessage) (string, error) {
