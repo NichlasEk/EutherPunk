@@ -17,6 +17,7 @@ api_url = "http://127.0.0.1:9999"
 listen = ":9999"
 ollama_url = "http://127.0.0.1:11434"
 model = "qwen3-coder:30b"
+workspace_model = "devstral-small-2:24b"
 safe_mode = true
 
 [eutheroxide]
@@ -49,6 +50,9 @@ safe_mode = false
 	}
 	if cfg.EutherOxide.StatusURL != "http://127.0.0.1:32162/api/app/status" {
 		t.Fatalf("StatusURL = %q", cfg.EutherOxide.StatusURL)
+	}
+	if cfg.Agent.WorkspaceModel != "devstral-small-2:24b" {
+		t.Fatalf("WorkspaceModel = %q", cfg.Agent.WorkspaceModel)
 	}
 	if user.SafeMode == nil {
 		t.Fatal("SafeMode was nil")

@@ -339,11 +339,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	workspaceModel := strings.TrimSpace(appConfig.Agent.WorkspaceModel)
+	if workspaceModel == "" {
+		workspaceModel = appConfig.Agent.Model
+	}
 	cfg := serverConfig{
 		addr:                 envOr("EUTHERPUNK_ADDR", appConfig.Agent.Listen),
 		ollamaURL:            strings.TrimRight(envOr("OLLAMA_URL", appConfig.Agent.OllamaURL), "/"),
 		model:                envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
-		workspaceModel:       envOr("EUTHERPUNK_WORKSPACE_MODEL", appConfig.Agent.Model),
+		workspaceModel:       envOr("EUTHERPUNK_WORKSPACE_MODEL", workspaceModel),
 		visionModel:          envOr("EUTHERPUNK_VISION_MODEL", appConfig.Agent.VisionModel),
 		configPath:           appConfig.Path,
 		chatDir:              envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),

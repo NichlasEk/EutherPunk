@@ -31,12 +31,13 @@ type ServerConfig struct {
 }
 
 type AgentConfig struct {
-	APIURL      string `json:"api_url"`
-	Listen      string `json:"listen"`
-	OllamaURL   string `json:"ollama_url"`
-	Model       string `json:"model"`
-	VisionModel string `json:"vision_model"`
-	SafeMode    bool   `json:"safe_mode"`
+	APIURL         string `json:"api_url"`
+	Listen         string `json:"listen"`
+	OllamaURL      string `json:"ollama_url"`
+	Model          string `json:"model"`
+	WorkspaceModel string `json:"workspace_model"`
+	VisionModel    string `json:"vision_model"`
+	SafeMode       bool   `json:"safe_mode"`
 }
 
 type DownloadsConfig struct {
@@ -255,6 +256,8 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.Agent.OllamaURL = mustString(raw)
 		case "model":
 			cfg.Agent.Model = mustString(raw)
+		case "workspace_model":
+			cfg.Agent.WorkspaceModel = mustString(raw)
 		case "vision_model":
 			cfg.Agent.VisionModel = mustString(raw)
 		case "safe_mode":
