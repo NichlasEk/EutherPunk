@@ -132,3 +132,46 @@ func TestSystemReportDoesNotIncludeSensitiveIdentifiers(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandSuggestion(t *testing.T) {
+	tests := map[string]string{
+		"":                      "",
+		"hej":                   "",
+		"/p":                    "/permissions",
+		"/permissions":          "",
+		"/permissions s":        "/permissions system ask",
+		"/permissions system s": "/permissions system session",
+		"/system s":             "/system share",
+		"/unknown":              "",
+	}
+	for input, expected := range tests {
+		if got := commandSuggestion(input); got != expected {
+			t.Fatalf("commandSuggestion(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
+func TestRemoveLastRune(t *testing.T) {
+	if got := removeLastRune("hjälp"); got != "hjäl" {
+		t.Fatalf("removeLastRune = %q", got)
+	}
+}
+
+func TestReadTerminalArrowVariants(t *testing.T) {
+	tests := map[string]string{
+		"\x1b[A":   "up",
+		"\x1bOA":   "up",
+		"\xe0\x48": "up",
+		"\x00\x48": "up",
+		"\x1b[B":   "down",
+	}
+	for encoded, expected := range tests {
+		got, err := readTerminalKey(strings.NewReader(encoded))
+		if err != nil {
+			t.Fatalf("readTerminalKey(%q): %v", encoded, err)
+		}
+		if got != expected {
+			t.Fatalf("readTerminalKey(%q) = %q, want %q", encoded, got, expected)
+		}
+	}
+}

@@ -127,20 +127,19 @@ func assist(cfg cliConfig, initialPrompt string) error {
 	fmt.Printf("Modell: %s\n\n", cfg.model)
 
 	reader := bufio.NewReader(os.Stdin)
+	editor := newLineEditor(reader)
 	history := make([]chatMessage, 0, 12)
 	permissions := defaultSessionPermissions()
 	prompt := strings.TrimSpace(initialPrompt)
 
 	for {
 		if prompt == "" {
-			fmt.Print("du> ")
-			line, err := reader.ReadString('\n')
+			line, err := editor.ReadLine("du> ")
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
 			}
 			prompt = strings.TrimSpace(line)
 			if prompt == "" && errors.Is(err, io.EOF) {
-				fmt.Println()
 				return nil
 			}
 			if prompt == "" {
@@ -179,6 +178,8 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			return nil
 		case "/help":
 			fmt.Println("Skriv ett meddelande och tryck Enter.")
+			fmt.Println("Uppåtpil eller Tab accepterar ett giftgrönt kommandoförslag.")
+			fmt.Println("Uppåtpil visar historik när inget förslag syns.")
 			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
 			fmt.Println("/system share delar rapporten med modellen.")

@@ -133,6 +133,10 @@ Interactive preview commands:
 /exit
 ```
 
+While typing a slash command in an interactive terminal, the closest available
+completion is shown as dim gift-green text. Press Up Arrow or Tab to accept it.
+When no completion is visible, Up Arrow recalls command history.
+
 `/system` keeps the report in the terminal. `/system share` explicitly sends
 the same report to the selected model as chat context. Permissions are
 session-only and reset when the process exits.
