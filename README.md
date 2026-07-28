@@ -117,7 +117,25 @@ go run ./cmd/eutherpunk assist
 
 The first portable CLI preview is deliberately chat-only. It does not inspect
 files, execute local commands, install software, or request administrator
-access. Those capabilities will be added later behind local approval prompts.
+access. The first local tool can collect a small system report after approval;
+it does not inspect arbitrary files or collect IP addresses, serial numbers, or
+machine IDs.
+
+Interactive preview commands:
+
+```text
+/permissions
+/permissions system off|ask|session
+/system
+/system share
+/clear
+/status
+/exit
+```
+
+`/system` keeps the report in the terminal. `/system share` explicitly sends
+the same report to the selected model as chat context. Permissions are
+session-only and reset when the process exits.
 
 ## Portable Windows Preview
 

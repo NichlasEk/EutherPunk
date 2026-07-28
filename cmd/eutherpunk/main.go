@@ -109,8 +109,8 @@ func main() {
 
 func doctor(cfg cliConfig) error {
 	fmt.Println("EutherPunk CLI", version)
-	fmt.Println("mode: portable chat-only preview")
-	fmt.Println("local_access: disabled")
+	fmt.Println("mode: portable safe preview")
+	fmt.Println("local_access: system-info (ask); files and shell disabled")
 	fmt.Println("config:", cfg.configPath)
 	fmt.Println("api_url:", cfg.apiURL)
 	fmt.Println("model:", cfg.model)
@@ -121,13 +121,14 @@ func doctor(cfg cliConfig) error {
 
 func assist(cfg cliConfig, initialPrompt string) error {
 	fmt.Printf("EutherPunk %s\n", version)
-	fmt.Println("Försiktig förhandsversion: endast chatt.")
-	fmt.Println("CLI:t kan inte läsa filer, köra kommandon eller ändra datorn.")
+	fmt.Println("Försiktig förhandsversion: chatt och godkänd systeminformation.")
+	fmt.Println("CLI:t kan inte läsa dina filer, köra valfria kommandon eller ändra datorn.")
 	fmt.Println("Skriv /help för hjälp eller /exit för att avsluta.")
 	fmt.Printf("Modell: %s\n\n", cfg.model)
 
 	reader := bufio.NewReader(os.Stdin)
 	history := make([]chatMessage, 0, 12)
+	permissions := defaultSessionPermissions()
 	prompt := strings.TrimSpace(initialPrompt)
 
 	for {
@@ -147,11 +148,40 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			}
 		}
 
-		switch strings.ToLower(prompt) {
+		lowerPrompt := strings.ToLower(strings.TrimSpace(prompt))
+		if strings.HasPrefix(lowerPrompt, "/permissions") {
+			handlePermissionsCommand(&permissions, prompt)
+			prompt = ""
+			continue
+		}
+		if lowerPrompt == "/system" || lowerPrompt == "/system share" {
+			report, allowed, err := approvedSystemReport(reader, &permissions)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				prompt = ""
+				continue
+			}
+			fmt.Println()
+			fmt.Println(report.String())
+			if lowerPrompt == "/system" {
+				fmt.Println()
+				fmt.Println("Informationen stannar lokalt. Använd /system share för att dela den med EutherPunk.")
+				prompt = ""
+				continue
+			}
+			prompt = report.SharedPrompt()
+		}
+
+		switch lowerPrompt {
 		case "/exit", "/quit", "exit", "quit":
 			return nil
 		case "/help":
 			fmt.Println("Skriv ett meddelande och tryck Enter.")
+			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
+			fmt.Println("/system visar grundläggande systeminformation lokalt.")
+			fmt.Println("/system share delar rapporten med modellen.")
 			fmt.Println("/clear glömmer den lokala samtalstråden.")
 			fmt.Println("/status kontrollerar anslutningen.")
 			fmt.Println("/exit avslutar.")

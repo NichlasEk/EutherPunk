@@ -96,3 +96,39 @@ func TestChatOnlyMessagesNeutralizesServerSlashCommand(t *testing.T) {
 		t.Fatalf("chatOnlyMessages = %#v", got)
 	}
 }
+
+func TestPermissionLevel(t *testing.T) {
+	for _, value := range []string{"off", "ask", "session"} {
+		got, ok := parsePermissionLevel(value)
+		if !ok || string(got) != value {
+			t.Fatalf("parsePermissionLevel(%q) = %q, %v", value, got, ok)
+		}
+	}
+	if _, ok := parsePermissionLevel("always"); ok {
+		t.Fatal("permanent permission must not be accepted in preview")
+	}
+}
+
+func TestSystemReportDoesNotIncludeSensitiveIdentifiers(t *testing.T) {
+	report := systemReport{
+		OperatingSystem:  "windows",
+		OSVersion:        "Windows test",
+		Architecture:     "amd64",
+		Hostname:         "computer",
+		Username:         "user",
+		WorkingDirectory: `C:\Test`,
+		LogicalCPUs:      8,
+		CLIVersion:       "test",
+	}
+	text := report.String()
+	for _, expected := range []string{"windows", "Windows test", "computer", `C:\Test`, "8"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("report missing %q: %s", expected, text)
+		}
+	}
+	for _, forbidden := range []string{"IP-adress", "serienummer", "maskin-ID"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("report unexpectedly contains %q: %s", forbidden, text)
+		}
+	}
+}
