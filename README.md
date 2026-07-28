@@ -187,6 +187,9 @@ while one coding job works in the background. `/job` polls its activity,
 proposal, and `/job cancel` stops it. Escape twice while waiting also sends a
 server-side cancellation. Completed, failed, cancelled, and expired jobs
 therefore have explicit outcomes instead of depending on one long proxy request.
+While a coding job exists, conversational turns reuse its already-loaded model
+to avoid a long Ollama model swap. Normal chat returns to the configured
+conversational model after the proposal is opened or the job is cancelled.
 The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured
 format validation, and local proposal validation. It deliberately does not
