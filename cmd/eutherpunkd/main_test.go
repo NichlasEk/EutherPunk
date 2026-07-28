@@ -29,6 +29,9 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 			!strings.Contains(request.Messages[0].Content, "Kontrollera särskilt att varje") {
 			t.Fatalf("workspace system prompt saknar slutkontroll: %#v", request.Messages)
 		}
+		if !strings.Contains(request.Messages[0].Content, "Fråga aldrig först om") {
+			t.Fatalf("workspace system prompt saknar direkt filförslag: %#v", request.Messages)
+		}
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
 			Message: ollamaMessage{
 				Role: "assistant",

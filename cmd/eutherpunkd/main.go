@@ -2118,8 +2118,11 @@ Lägg aldrig självrättningar, alternativa utkast, resonemang, TODO, placeholde
 eller kommentarer som "vänta" i message eller filinnehåll. Varje källfil ska
 vara den enda slutliga, sammanhängande versionen. Kontrollera särskilt att varje
 anropad funktion och identifierare antingen definieras i filförslaget eller ingår
-i målmiljöns standard-API. Om du inte kan leverera kompletta filer ska files vara
-en tom lista och message kort förklara varför.`
+i målmiljöns standard-API. När användaren uttryckligen ber dig skapa eller ändra
+en fil ska du lägga det kompletta förslaget i files direkt. Fråga aldrig först om
+lov att skapa filen; CLI-klienten visar innehållet och begär separat godkännande
+innan något skrivs. Om du inte kan leverera kompletta filer ska files vara en tom
+lista och message kort förklara varför.`
 	format := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
