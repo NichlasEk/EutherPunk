@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -60,7 +63,11 @@ func TestStreamChatSendsConversationHistory(t *testing.T) {
 	})
 
 	var output bytes.Buffer
-	answer, err := streamChat(cliConfig{apiURL: "https://example.invalid", model: "test-model"}, []chatMessage{
+	answer, err := streamChat(cliConfig{
+		apiURL: "https://example.invalid",
+		model:  "test-model",
+		memory: memoryState{Enabled: true, Content: "Minns detta."},
+	}, []chatMessage{
 		{Role: "user", Content: "första"},
 		{Role: "assistant", Content: "svaret"},
 		{Role: "user", Content: "andra"},
@@ -76,6 +83,9 @@ func TestStreamChatSendsConversationHistory(t *testing.T) {
 	}
 	if received.Messages[0].Content != "/chat första" || received.Messages[2].Content != "/chat andra" {
 		t.Fatalf("chat-only messages = %#v", received.Messages)
+	}
+	if !strings.Contains(received.ClientContext, "Minns detta.") {
+		t.Fatalf("client context = %q", received.ClientContext)
 	}
 }
 
@@ -173,5 +183,57 @@ func TestReadTerminalArrowVariants(t *testing.T) {
 		if got != expected {
 			t.Fatalf("readTerminalKey(%q) = %q, want %q", encoded, got, expected)
 		}
+	}
+}
+
+func TestMemoryEnablePersistsAndDisablePreservesFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	state, err := loadMemoryState(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Enabled {
+		t.Fatal("memory should default to off")
+	}
+	if err := state.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Enabled || !strings.Contains(state.Content, "# EutherPunk Memory") {
+		t.Fatalf("enabled state = %#v", state)
+	}
+
+	reloaded, err := loadMemoryState(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Enabled || reloaded.Content != state.Content {
+		t.Fatalf("reloaded state = %#v", reloaded)
+	}
+	if err := reloaded.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(reloaded.Path); err != nil {
+		t.Fatalf("memory.md should be preserved: %v", err)
+	}
+	if _, err := os.Stat(reloaded.EnabledPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("enable marker should be removed, got %v", err)
+	}
+}
+
+func TestMemoryRejectsOversizedFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(filepath.Join(dir, "memory.md"), bytes.Repeat([]byte("x"), maxMemoryBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "memory.enabled"), []byte("enabled\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadMemoryState(configPath)
+	if err == nil {
+		t.Fatal("expected oversized memory error")
+	}
+	if state.Enabled || state.ClientContext() != "" {
+		t.Fatal("oversized memory must not be sent")
 	}
 }

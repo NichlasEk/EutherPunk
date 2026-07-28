@@ -18,6 +18,12 @@ const (
 )
 
 var availableCommands = []string{
+	"/memory",
+	"/memory off",
+	"/memory on",
+	"/memory path",
+	"/memory reload",
+	"/memory show",
 	"/permissions",
 	"/permissions reset",
 	"/permissions system ask",

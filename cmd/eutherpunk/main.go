@@ -26,6 +26,7 @@ type cliConfig struct {
 	apiURL     string
 	model      string
 	configPath string
+	memory     memoryState
 }
 
 type chatMessage struct {
@@ -34,9 +35,10 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Message  string        `json:"message,omitempty"`
-	Model    string        `json:"model,omitempty"`
-	Messages []chatMessage `json:"messages,omitempty"`
+	Message       string        `json:"message,omitempty"`
+	Model         string        `json:"model,omitempty"`
+	Messages      []chatMessage `json:"messages,omitempty"`
+	ClientContext string        `json:"client_context,omitempty"`
 }
 
 type chatResponse struct {
@@ -61,11 +63,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+	memory, memoryErr := loadMemoryState(appConfig.Path)
 
 	cfg := cliConfig{
 		apiURL:     strings.TrimRight(cliValue("EUTHERPUNK_URL", appConfig.Agent.APIURL, defaultAPIURL, configExists), "/"),
 		model:      cliValue("EUTHERPUNK_MODEL", appConfig.Agent.Model, defaultModel, configExists),
 		configPath: appConfig.Path,
+		memory:     memory,
+	}
+	if memoryErr != nil {
+		fmt.Fprintln(os.Stderr, "minnesvarning:", memoryErr)
 	}
 
 	if len(os.Args) == 1 {
@@ -114,6 +121,7 @@ func doctor(cfg cliConfig) error {
 	fmt.Println("config:", cfg.configPath)
 	fmt.Println("api_url:", cfg.apiURL)
 	fmt.Println("model:", cfg.model)
+	fmt.Println("memory:", cfg.memory.StatusLine())
 	fmt.Println()
 	fmt.Println("status:")
 	return printGet(cfg.apiURL + "/api/eutherpunk/status")
@@ -125,6 +133,8 @@ func assist(cfg cliConfig, initialPrompt string) error {
 	fmt.Println("CLI:t kan inte läsa dina filer, köra valfria kommandon eller ändra datorn.")
 	fmt.Println("Skriv /help för hjälp eller /exit för att avsluta.")
 	fmt.Printf("Modell: %s\n\n", cfg.model)
+	fmt.Println("Minne:", cfg.memory.StatusLine())
+	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
 	editor := newLineEditor(reader)
@@ -150,6 +160,13 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		lowerPrompt := strings.ToLower(strings.TrimSpace(prompt))
 		if strings.HasPrefix(lowerPrompt, "/permissions") {
 			handlePermissionsCommand(&permissions, prompt)
+			prompt = ""
+			continue
+		}
+		if strings.HasPrefix(lowerPrompt, "/memory") {
+			if err := handleMemoryCommand(&cfg.memory, prompt); err != nil {
+				fmt.Fprintln(os.Stderr, "minnesfel:", err)
+			}
 			prompt = ""
 			continue
 		}
@@ -180,6 +197,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("Skriv ett meddelande och tryck Enter.")
 			fmt.Println("Uppåtpil eller Tab accepterar ett giftgrönt kommandoförslag.")
 			fmt.Println("Uppåtpil visar historik när inget förslag syns.")
+			fmt.Println("/memory visar eller ändrar det lokala långtidsminnet.")
 			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
 			fmt.Println("/system share delar rapporten med modellen.")
@@ -233,7 +251,11 @@ func chat(cfg cliConfig, prompt string) error {
 }
 
 func streamChat(cfg cliConfig, messages []chatMessage, output io.Writer) (string, error) {
-	raw, err := json.Marshal(chatRequest{Messages: chatOnlyMessages(messages), Model: cfg.model})
+	raw, err := json.Marshal(chatRequest{
+		Messages:      chatOnlyMessages(messages),
+		Model:         cfg.model,
+		ClientContext: cfg.memory.ClientContext(),
+	})
 	if err != nil {
 		return "", err
 	}
@@ -287,13 +309,23 @@ func ask(cfg cliConfig, prompt string) error {
 		return errors.New("ask requires a prompt")
 	}
 
-	raw, err := json.Marshal(chatRequest{Message: prompt, Model: cfg.model})
+	raw, err := json.Marshal(chatRequest{
+		Message:       "/chat " + prompt,
+		Model:         cfg.model,
+		ClientContext: cfg.memory.ClientContext(),
+	})
 	if err != nil {
 		return err
 	}
 
-	client := http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Post(cfg.apiURL+"/api/eutherpunk/chat", "application/json", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, cfg.apiURL+"/api/eutherpunk/chat", bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "eutherpunk-cli/"+version)
+	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	resp, err := cliHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

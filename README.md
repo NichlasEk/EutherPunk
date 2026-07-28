@@ -126,6 +126,9 @@ Interactive preview commands:
 ```text
 /permissions
 /permissions system off|ask|session
+/memory
+/memory on|off
+/memory show|path|reload
 /system
 /system share
 /clear
@@ -140,6 +143,14 @@ When no completion is visible, Up Arrow recalls command history.
 `/system` keeps the report in the terminal. `/system share` explicitly sends
 the same report to the selected model as chat context. Permissions are
 session-only and reset when the process exits.
+
+Long-term memory is opt-in and stored next to the CLI config as `memory.md`.
+`/memory on` creates a human-readable template and a small enable marker, so
+the memory is loaded again at the next start. `/memory off` removes only the
+marker and preserves the Markdown file. The preview never writes memories on
+the model's initiative, caps the file at 32 KiB, and sends it as user-level
+background context rather than as a system instruction or tool authorization.
+Do not store passwords, tokens, private keys, or other secrets in the file.
 
 ## Portable Windows Preview
 
