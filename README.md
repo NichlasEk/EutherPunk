@@ -107,6 +107,38 @@ Stream an answer in the terminal:
 go run ./cmd/eutherpunk chat "vad kan du hjälpa mig med?"
 ```
 
+Start the interactive assistant:
+
+```bash
+go run ./cmd/eutherpunk
+# Same mode, with an explicit name:
+go run ./cmd/eutherpunk assist
+```
+
+The first portable CLI preview is deliberately chat-only. It does not inspect
+files, execute local commands, install software, or request administrator
+access. Those capabilities will be added later behind local approval prompts.
+
+## Portable Windows Preview
+
+Build only the Windows CLI from Linux:
+
+```bash
+GOOS=windows GOARCH=amd64 EUTHERPUNK_CLI_ONLY=1 scripts/build.sh
+sha256sum dist/cli/eutherpunk-windows-amd64.exe
+```
+
+The resulting `.exe` is portable: it does not need an installer and does not
+write configuration on first launch. The release build defaults to the public
+HTTPS endpoint and `supergemma4-26b-free:latest`. Either can be overridden in
+PowerShell:
+
+```powershell
+$env:EUTHERPUNK_URL = "https://apothictech.se"
+$env:EUTHERPUNK_MODEL = "supergemma4-26b-free:latest"
+.\eutherpunk-windows-amd64.exe
+```
+
 ## Build CLI Downloads
 
 Build current target:

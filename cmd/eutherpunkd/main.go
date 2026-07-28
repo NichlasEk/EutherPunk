@@ -675,7 +675,7 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("message is required"))
 			return
 		}
-		if answer, handled, err := handleEutherNetSlash(r.Context(), cfg, lastUserMessage(messages)); handled {
+		if answer, handled, err := handleEutherNetForClient(r, cfg, messages); handled {
 			if err != nil {
 				writeError(w, http.StatusBadGateway, err)
 				return
@@ -732,7 +732,7 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, errors.New("message is required"))
 			return
 		}
-		if answer, handled, err := handleEutherNetSlash(r.Context(), cfg, lastUserMessage(messages)); handled {
+		if answer, handled, err := handleEutherNetForClient(r, cfg, messages); handled {
 			w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
 			encoder := json.NewEncoder(w)
@@ -799,6 +799,13 @@ func lastUserMessage(messages []ollamaMessage) string {
 		}
 	}
 	return ""
+}
+
+func handleEutherNetForClient(r *http.Request, cfg serverConfig, messages []ollamaMessage) (string, bool, error) {
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-EutherPunk-Client-Mode")), "chat-only") {
+		return "", false, nil
+	}
+	return handleEutherNetSlash(r.Context(), cfg, lastUserMessage(messages))
 }
 
 func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string) (string, bool, error) {
