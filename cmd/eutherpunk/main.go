@@ -395,7 +395,10 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		chatCfg := cfg
 		if pendingJob.Job.ID != "" && strings.TrimSpace(pendingJob.Job.Model) != "" {
 			chatCfg.model = pendingJob.Job.Model
-			fmt.Printf("eutherpunk> pratar via den redan aktiva modellen %s.\n", chatCfg.model)
+			fmt.Printf(
+				"eutherpunk> jag är kvar; svarar via %s. Om kodaren använder modellplatsen köas svaret en stund.\n",
+				chatCfg.model,
+			)
 		}
 		answer, err = runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
 			return streamChatContext(ctx, chatCfg, trimHistory(history), os.Stdout)
