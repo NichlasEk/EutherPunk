@@ -10,7 +10,7 @@ api_url = "http://127.0.0.1:8787"
 listen = "127.0.0.1:8787"
 ollama_url = "http://127.0.0.1:11434"
 model = "qwen3-coder:30b"
-workspace_model = "qwen3-coder:30b"
+workspace_model = "devstral-small-2:24b"
 vision_model = "moondream:latest"
 safe_mode = true
 

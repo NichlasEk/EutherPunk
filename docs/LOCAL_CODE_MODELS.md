@@ -1,6 +1,6 @@
 # Local coding model candidates
 
-Last reviewed: 2026-07-28.
+Last reviewed: 2026-07-29.
 
 EutherPunk should evaluate coding models inside the same iterative agent loop:
 generate a complete proposal, perform an independent semantic review, repair
@@ -15,10 +15,11 @@ still fails. A one-shot prompt is not a meaningful coding-agent comparison.
    - Designed for tool use, repository exploration, multi-file editing, and
      software-engineering agents.
    - Mistral reports 65.8% on SWE-bench Verified for the 24B model.
-   - Best next A/B candidate for the current roughly 20 GB local model budget.
+   - Selected for the live EutherPunk workspace A/B test on 2026-07-29 after
+     Qwen again failed the Tetris task behind the revised file harness.
 
 2. **Qwen3-Coder 30B-A3B**
-   - Current EutherPunk workspace model, about 19 GB in Ollama.
+   - Previous EutherPunk workspace model, about 19 GB in Ollama.
    - Open weights with strong official emphasis on agentic coding and tool use.
    - Efficient MoE architecture with 30B total and about 3.3B active parameters.
    - Failed the EutherPunk Tetris acceptance test on 2026-07-28: two repair
