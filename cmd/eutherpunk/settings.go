@@ -217,8 +217,8 @@ func (settings cliSettings) Validate() error {
 	if settings.SystemInfo != permissionOff && settings.SystemInfo != permissionAsk {
 		return errors.New("[permissions].system_info måste vara \"off\" eller \"ask\"")
 	}
-	if settings.Files != permissionOff && settings.Files != permissionAsk {
-		return errors.New("[permissions].files måste vara \"off\" eller \"ask\"")
+	if settings.Files != permissionOff && settings.Files != permissionAsk && settings.Files != permissionAuto {
+		return errors.New("[permissions].files måste vara \"off\", \"ask\" eller \"auto\"")
 	}
 	if settings.MemoryMaxBytes < 1 || settings.MemoryMaxBytes > maxMemoryBytes {
 		return fmt.Errorf("[memory].max_bytes måste vara 1-%d", maxMemoryBytes)

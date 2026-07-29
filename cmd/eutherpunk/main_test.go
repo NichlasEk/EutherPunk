@@ -227,7 +227,7 @@ func TestChatOnlyMessagesNeutralizesServerSlashCommand(t *testing.T) {
 }
 
 func TestPermissionLevel(t *testing.T) {
-	for _, value := range []string{"off", "ask", "session"} {
+	for _, value := range []string{"off", "ask", "session", "auto"} {
 		got, ok := parsePermissionLevel(value)
 		if !ok || string(got) != value {
 			t.Fatalf("parsePermissionLevel(%q) = %q, %v", value, got, ok)
@@ -235,6 +235,19 @@ func TestPermissionLevel(t *testing.T) {
 	}
 	if _, ok := parsePermissionLevel("always"); ok {
 		t.Fatal("permanent permission must not be accepted in preview")
+	}
+}
+
+func TestCLISettingsAllowAutomaticWorkspaceFiles(t *testing.T) {
+	settings := defaultCLISettings(
+		filepath.Join(t.TempDir(), "config.toml"),
+		"https://example.invalid",
+		"model",
+		false,
+	)
+	settings.Files = permissionAuto
+	if err := settings.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

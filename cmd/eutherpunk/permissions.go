@@ -12,6 +12,7 @@ const (
 	permissionOff     permissionLevel = "off"
 	permissionAsk     permissionLevel = "ask"
 	permissionSession permissionLevel = "session"
+	permissionAuto    permissionLevel = "auto"
 )
 
 type sessionPermissions struct {
@@ -59,8 +60,8 @@ func parsePermissionLevel(value string) (permissionLevel, bool) {
 		return permissionOff, true
 	case permissionAsk:
 		return permissionAsk, true
-	case permissionSession:
-		return permissionSession, true
+	case permissionSession, permissionAuto:
+		return permissionLevel(strings.ToLower(strings.TrimSpace(value))), true
 	default:
 		return "", false
 	}
@@ -70,7 +71,11 @@ func printPermissions(permissions sessionPermissions) {
 	fmt.Println("BEHÖRIGHETER")
 	fmt.Printf("Systeminformation    %s\n", strings.ToUpper(string(permissions.systemInfo)))
 	fmt.Printf("Läsa arbetsytefiler  %s\n", strings.ToUpper(string(permissions.files)))
-	fmt.Println("Ändra arbetsytefiler ALLTID FRÅGA")
+	if permissions.files == permissionAuto {
+		fmt.Println("Ändra arbetsytefiler AUTO (endast vald arbetsyta)")
+	} else {
+		fmt.Println("Ändra arbetsytefiler ALLTID FRÅGA")
+	}
 	fmt.Println("Köra kommandon        OFF (inte tillgängligt)")
 	fmt.Println("Administratör         NEVER")
 	fmt.Println()
@@ -81,7 +86,7 @@ func printPermissionsHelp() {
 	fmt.Println("Användning:")
 	fmt.Println("  /permissions")
 	fmt.Println("  /permissions system off|ask|session")
-	fmt.Println("  /permissions files off|ask|session")
+	fmt.Println("  /permissions files off|ask|session|auto")
 	fmt.Println("  /permissions reset")
 }
 

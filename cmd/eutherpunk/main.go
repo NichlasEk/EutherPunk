@@ -379,6 +379,27 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			}
 			if started {
 				pendingJob = startedJob
+				if permissions.files == permissionAuto {
+					fmt.Println("eutherpunk> AUTO följer jobbet, reparerar vid behov och skriver godkända filer.")
+					if err := waitAndReviewPendingWorkspaceJob(
+						cfg,
+						&pendingJob,
+						reader,
+						&permissions,
+						os.Stdout,
+					); err != nil {
+						fmt.Fprintln(os.Stderr, "kodjobbsfel:", err)
+						history = history[:len(history)-1]
+					} else {
+						history = append(history, chatMessage{
+							Role:    "assistant",
+							Content: "[Kodjobbet slutfördes automatiskt i arbetsytan.]",
+						})
+						history = trimHistory(history)
+					}
+					prompt = ""
+					continue
+				}
 				history = append(history, chatMessage{
 					Role:    "assistant",
 					Content: "[Kodjobbet arbetar i bakgrunden. Använd /job för status.]",

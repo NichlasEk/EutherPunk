@@ -226,41 +226,18 @@ func handleWorkspaceJobCommand(
 		*pending = pendingWorkspaceJob{}
 		return nil
 	case "wait", "vänta", "vanta":
-		var message string
-		var proposal fileProposal
-		err := func() error {
-			answer, waitErr := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
-				var innerErr error
-				message, proposal, innerErr = waitWorkspaceJob(
-					ctx,
-					cfg,
-					pending.Job,
-					output,
-					&pending.LastActivity,
-				)
-				return message, innerErr
-			})
-			message = answer
-			return waitErr
-		}()
-		if err != nil {
-			if errors.Is(err, errAgentInterrupted) {
-				_, _ = io.WriteString(output, "\nBevakningen avbröts. Serverjobbet har också avbrutits.\n")
-				*pending = pendingWorkspaceJob{}
-				return nil
-			}
-			return err
-		}
-		_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
-		*pending = pendingWorkspaceJob{}
-		return err
+		return waitAndReviewPendingWorkspaceJob(
+			cfg, pending, reader, permissions, output,
+		)
 	case "open", "öppna", "oppna":
 		if err := refreshPendingWorkspaceJob(context.Background(), cfg, pending, output); err != nil {
 			return err
 		}
 		if pending.Job.Status != "completed" {
-			_, _ = fmt.Fprintf(output, "Kodjobbet är %s. Använd /job wait för att följa det.\n", pending.Job.Status)
-			return nil
+			_, _ = fmt.Fprintf(output, "Kodjobbet är %s; väntar tills det kan öppnas.\n", pending.Job.Status)
+			return waitAndReviewPendingWorkspaceJob(
+				cfg, pending, reader, permissions, output,
+			)
 		}
 		message, proposal, err := validateWorkspaceJobResult(pending.Job)
 		if err != nil {
@@ -280,10 +257,12 @@ func handleWorkspaceJobCommand(
 			printWorkspaceJobActivities(output, repaired, &pending.LastActivity)
 			_, _ = fmt.Fprintf(
 				output,
-				"Den lokala kontrollen hittade ett körfel och startade ett reparationsvarv:\n%s\n",
+				"Den lokala kontrollen hittade ett körfel och startade ett reparationsvarv:\n%s\nVäntar automatiskt på reparation och ny kontroll.\n",
 				validationErr,
 			)
-			return nil
+			return waitAndReviewPendingWorkspaceJob(
+				cfg, pending, reader, permissions, output,
+			)
 		}
 		_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
 		*pending = pendingWorkspaceJob{}
@@ -300,6 +279,43 @@ func handleWorkspaceJobCommand(
 	default:
 		return errors.New("använd /job, /job wait, /job open eller /job cancel")
 	}
+}
+
+func waitAndReviewPendingWorkspaceJob(
+	cfg cliConfig,
+	pending *pendingWorkspaceJob,
+	reader *bufio.Reader,
+	permissions *sessionPermissions,
+	output io.Writer,
+) error {
+	var message string
+	var proposal fileProposal
+	err := func() error {
+		answer, waitErr := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
+			var innerErr error
+			message, proposal, innerErr = waitWorkspaceJob(
+				ctx,
+				cfg,
+				pending.Job,
+				output,
+				&pending.LastActivity,
+			)
+			return message, innerErr
+		})
+		message = answer
+		return waitErr
+	}()
+	if err != nil {
+		if errors.Is(err, errAgentInterrupted) {
+			_, _ = io.WriteString(output, "\nBevakningen avbröts. Serverjobbet har också avbrutits.\n")
+			*pending = pendingWorkspaceJob{}
+			return nil
+		}
+		return err
+	}
+	_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
+	*pending = pendingWorkspaceJob{}
+	return err
 }
 
 func shortWorkspaceJobID(id string) string {
@@ -757,7 +773,7 @@ func approvedWorkspaceContext(
 			fmt.Println("Nekad.")
 			return "", false, nil
 		}
-	case permissionSession:
+	case permissionSession, permissionAuto:
 	default:
 		return "", false, fmt.Errorf("okänd filbehörighet: %s", permissions.files)
 	}
@@ -963,22 +979,26 @@ func approveAndApplyProposal(
 			return false, errors.New("ogiltigt filmål")
 		}
 	}
-	fmt.Println()
-	fmt.Println("FÖRHANDSVISNING AV NYTT INNEHÅLL")
-	for _, file := range proposal.Files {
-		printFilePreview(file)
-	}
-	fmt.Println("Inga filer har ändrats ännu.")
-	fmt.Print("Skriv filerna i arbetsytan? [y/N]: ")
-	answer, err := reader.ReadString('\n')
-	if err != nil {
-		return false, err
-	}
-	switch strings.ToLower(strings.TrimSpace(answer)) {
-	case "y", "yes", "j", "ja":
-	default:
-		fmt.Println("Filändringarna nekades.")
-		return false, nil
+	if permissions.files != permissionAuto {
+		fmt.Println()
+		fmt.Println("FÖRHANDSVISNING AV NYTT INNEHÅLL")
+		for _, file := range proposal.Files {
+			printFilePreview(file)
+		}
+		fmt.Println("Inga filer har ändrats ännu.")
+		fmt.Print("Skriv filerna i arbetsytan? [y/N]: ")
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "y", "yes", "j", "ja":
+		default:
+			fmt.Println("Filändringarna nekades.")
+			return false, nil
+		}
+	} else {
+		fmt.Println("AUTO-läge: skriver det godkända förslaget i den valda arbetsytan.")
 	}
 	for _, file := range proposal.Files {
 		if err := backupWorkspaceFile(root, file.Path); err != nil {

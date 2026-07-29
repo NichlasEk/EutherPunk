@@ -90,6 +90,31 @@ func TestApprovedProposalWritesOnlyInsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestAutoProposalWritesWithoutConfirmation(t *testing.T) {
+	root := t.TempDir()
+	proposal := fileProposal{Files: []workspaceFile{{
+		Path:    "main.lua",
+		Content: "print('auto')\n",
+	}}}
+	permissions := sessionPermissions{files: permissionAuto}
+	applied, err := approveAndApplyProposal(
+		bufio.NewReader(strings.NewReader("")),
+		workspaceState{Root: root},
+		&permissions,
+		proposal,
+	)
+	if err != nil || !applied {
+		t.Fatalf("applied=%v, err=%v", applied, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "main.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != proposal.Files[0].Content {
+		t.Fatalf("content = %q", raw)
+	}
+}
+
 func TestWorkspaceWriteRejectsSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

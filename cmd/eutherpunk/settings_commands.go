@@ -68,6 +68,8 @@ func captureRuntimeSettings(cfg *cliConfig, permissions *sessionPermissions) {
 	}
 	if permissions.files == permissionOff {
 		cfg.settings.Files = permissionOff
+	} else if permissions.files == permissionAuto {
+		cfg.settings.Files = permissionAuto
 	} else {
 		cfg.settings.Files = permissionAsk
 	}
