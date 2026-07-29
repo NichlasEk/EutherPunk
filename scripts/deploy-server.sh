@@ -27,6 +27,9 @@ fi
 ssh_cmd "mkdir -p '$REMOTE_ROOT/bin' '$REMOTE_ROOT/dist/cli' '$REMOTE_CONFIG_DIR' '$SERVICE_DIR'"
 
 scp_to "$ROOT/dist/cli/eutherpunk-linux-amd64" "$REMOTE_ROOT/dist/cli/eutherpunk-linux-amd64"
+if [ -f "$ROOT/dist/cli/eutherpunk-windows-amd64.exe" ]; then
+  scp_to "$ROOT/dist/cli/eutherpunk-windows-amd64.exe" "$REMOTE_ROOT/dist/cli/eutherpunk-windows-amd64.exe"
+fi
 scp_to "$ROOT/dist/cli/eutherpunkd-linux-amd64" "$REMOTE_ROOT/bin/eutherpunkd.new"
 scp_to "$ROOT/deploy/eutherpunk.server.toml" "$REMOTE_CONFIG_DIR/config.toml"
 scp_to "$ROOT/deploy/eutherpunkd.service" "$SERVICE_DIR/eutherpunkd.service"
