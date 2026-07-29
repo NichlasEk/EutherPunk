@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -189,6 +190,53 @@ func generateCLIImage(
 			}
 		}
 	}
+}
+
+func runCLIImageAsset(
+	cfg cliConfig,
+	reader *bufio.Reader,
+	permissions *sessionPermissions,
+	prompt string,
+	history []chatMessage,
+	output io.Writer,
+) (string, error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", errors.New("använd /image <bildprompt>")
+	}
+	fmt.Fprintln(output, "eutherpunk> genererar bildasset… (Esc Esc avbryter)")
+	var image cliImageResponse
+	_, err := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
+		var generateErr error
+		image, generateErr = generateCLIImage(ctx, cfg, prompt, history, output)
+		return "", generateErr
+	})
+	if err != nil {
+		if errors.Is(err, errAgentInterrupted) {
+			return "", errors.New("bildjobbet avbröts")
+		}
+		if strings.Contains(err.Error(), "insufficient_scope") {
+			return "", errors.New("din befintliga CLI-inloggning saknar mediaåtkomst; kör /logout och därefter /auth login för att godkänna det nya scopet")
+		}
+		return "", err
+	}
+	assetPath, saved, err := saveCLIImageAsset(
+		context.Background(),
+		cfg,
+		reader,
+		permissions,
+		image,
+	)
+	if err != nil {
+		return "", err
+	}
+	if saved {
+		fmt.Fprintln(output, "eutherpunk> bildasset sparad:", assetPath)
+		return "Bildasset sparad i arbetsytan: " + assetPath, nil
+	}
+	imageURL := absoluteCLIURL(cfg.apiURL, image.URL)
+	fmt.Fprintln(output, "eutherpunk> bild klar på servern:", imageURL)
+	return "Bild klar på servern: " + imageURL, nil
 }
 
 func fetchCLIImageJob(ctx context.Context, cfg cliConfig, id string) (cliImageJob, error) {

@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -98,9 +97,10 @@ func TestGenerateAndSaveCLIImageAsset(t *testing.T) {
 			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		},
 	}
-	image, err := generateCLIImage(
-		context.Background(),
+	result, err := runCLIImageAsset(
 		cfg,
+		bufio.NewReader(strings.NewReader("")),
+		&sessionPermissions{files: permissionAuto},
 		"floating blocks",
 		[]chatMessage{{Role: "user", Content: "gör en bild"}},
 		io.Discard,
@@ -108,18 +108,8 @@ func TestGenerateAndSaveCLIImageAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relative, saved, err := saveCLIImageAsset(
-		context.Background(),
-		cfg,
-		bufio.NewReader(strings.NewReader("")),
-		&sessionPermissions{files: permissionAuto},
-		image,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !saved || relative != "assets/result.png" || calls != 3 {
-		t.Fatalf("saved=%v relative=%q calls=%d", saved, relative, calls)
+	if result != "Bildasset sparad i arbetsytan: assets/result.png" || calls != 3 {
+		t.Fatalf("result=%q calls=%d", result, calls)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "assets", "result.png"))
 	if err != nil {

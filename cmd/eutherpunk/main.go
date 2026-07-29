@@ -263,6 +263,28 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			prompt = ""
 			continue
 		}
+		if strings.HasPrefix(lowerPrompt, "/image ") || strings.HasPrefix(lowerPrompt, "/bild ") {
+			imagePrompt := strings.TrimSpace(prompt[strings.IndexByte(prompt, ' ')+1:])
+			result, imageErr := runCLIImageAsset(
+				cfg,
+				reader,
+				&permissions,
+				imagePrompt,
+				trimHistory(history),
+				os.Stdout,
+			)
+			if imageErr != nil {
+				fmt.Fprintln(os.Stderr, "bildfel:", imageErr)
+			} else if result != "" {
+				history = append(history,
+					chatMessage{Role: "user", Content: prompt},
+					chatMessage{Role: "assistant", Content: result},
+				)
+				history = trimHistory(history)
+			}
+			prompt = ""
+			continue
+		}
 		if lowerPrompt == "/job" || strings.HasPrefix(lowerPrompt, "/job ") {
 			if err := handleWorkspaceJobCommand(
 				cfg,
@@ -339,6 +361,8 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("/job visar det aktiva kodjobbets bygglogg och status.")
 			fmt.Println("/job wait följer jobbet tills filförslaget kan granskas.")
 			fmt.Println("/job open öppnar ett färdigt förslag; /job cancel avbryter.")
+			fmt.Println("/image <engelsk prompt> genererar en PNG under arbetsytans assets/.")
+			fmt.Println("/bild är ett alias för /image.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
 			fmt.Println("/system share delar en maskerad rapport med modellen.")
 			fmt.Println("/system share full delar även identifierande fält efter extra godkännande.")
@@ -494,41 +518,19 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		history = append(history, chatMessage{Role: "assistant", Content: visibleAnswer})
 		history = trimHistory(history)
 		if hasImagePrompt {
-			fmt.Println("eutherpunk> genererar bildasset… (Esc Esc avbryter)")
-			var image cliImageResponse
-			_, imageErr := runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
-				var generateErr error
-				image, generateErr = generateCLIImage(ctx, cfg, imagePrompt, trimHistory(history), os.Stdout)
-				return "", generateErr
-			})
+			result, imageErr := runCLIImageAsset(
+				cfg,
+				reader,
+				&permissions,
+				imagePrompt,
+				trimHistory(history),
+				os.Stdout,
+			)
 			if imageErr != nil {
-				if errors.Is(imageErr, errAgentInterrupted) {
-					fmt.Println("Bildjobbet avbröts. Du kan fortsätta skriva.")
-				} else if strings.Contains(imageErr.Error(), "insufficient_scope") {
-					fmt.Fprintln(os.Stderr, "bildfel: din befintliga CLI-inloggning saknar mediaåtkomst; kör /logout och starta eutherpunk igen för att godkänna det nya scopet")
-				} else {
-					fmt.Fprintln(os.Stderr, "bildfel:", imageErr)
-				}
-			} else {
-				assetPath, saved, saveErr := saveCLIImageAsset(
-					context.Background(),
-					cfg,
-					reader,
-					&permissions,
-					image,
-				)
-				if saveErr != nil {
-					fmt.Fprintln(os.Stderr, "bildfel:", saveErr)
-				} else if saved {
-					fmt.Println("eutherpunk> bildasset sparad:", assetPath)
-					history = append(history, chatMessage{
-						Role:    "assistant",
-						Content: "Bildasset sparad i arbetsytan: " + assetPath,
-					})
-					history = trimHistory(history)
-				} else {
-					fmt.Println("eutherpunk> bild klar på servern:", absoluteCLIURL(cfg.apiURL, image.URL))
-				}
+				fmt.Fprintln(os.Stderr, "bildfel:", imageErr)
+			} else if result != "" {
+				history = append(history, chatMessage{Role: "assistant", Content: result})
+				history = trimHistory(history)
 			}
 		}
 		prompt = ""

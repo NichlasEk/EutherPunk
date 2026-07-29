@@ -216,6 +216,8 @@ symlinked paths, cross-origin URLs, non-PNG responses and images larger than
 32 MiB are rejected. This requires both `eutherpunk:chat` and
 `eutherpunk:media` scopes. Tokens issued before this capability was introduced
 must be replaced with `/logout` followed by a new EutherID browser approval.
+Inside an initialized coding workspace, `/image <prompt>` (or `/bild`) is the
+deterministic asset command and bypasses workspace-code routing.
 
 ### Non-interactive local worker
 
