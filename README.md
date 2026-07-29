@@ -294,6 +294,29 @@ The bundled suites use only dependency-free local projects. Results and traces
 remain private under ignored `training/` directories. Never edit a suite after
 recording a baseline; add a new version instead.
 
+### Private repair dataset
+
+Build a deduplicated JSONL pilot from one or more trace files/directories:
+
+```bash
+eutherpunk dataset build \
+  --input training/traces \
+  --input training/outputs/devstral-multilang-v2 \
+  --output training/outputs/repair-dataset-pilot
+```
+
+Only accepted traces with a differing earlier draft and concrete repair
+evidence are exported. Directly successful generations are intentionally
+excluded. The builder rejects symlinks and strong private-key/token/assigned
+secret patterns, removes duplicate transitions and writes private
+`train.jsonl`, `holdout.jsonl` and `manifest.json` files.
+
+Small pilots with fewer than five examples remain entirely in `train.jsonl`;
+larger datasets use a deterministic ID-based holdout split. Every manifest sets
+`training_authorized` to false and requires manual license and secret review.
+Building a dataset is evidence preparation, not permission to train or upload
+its source.
+
 The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured
 format validation, and local proposal validation. It deliberately does not

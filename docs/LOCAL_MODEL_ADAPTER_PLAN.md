@@ -177,3 +177,36 @@ and `devstral-small-2:24b`. Results:
 The Lua case also exercised an internal reviewer-driven draft repair before its
 external verifier passed. All seven traces are private mode `0600` artifacts
 under the ignored training output tree.
+
+## First repair-dataset pilot
+
+The private dataset builder accepts repeatable trace files/directories and
+exports only accepted, diagnosed transitions where an earlier draft differs
+from the verified final files. It rejects symlinked input and strong secret
+patterns before creating the output directory, then deduplicates examples and
+uses deterministic holdout assignment once at least five examples exist.
+
+The first pilot inspected 42 JSON artifacts from the PunkScout, v1, v2 and live
+repair output trees:
+
+- accepted traces: 12;
+- usable repair transitions: 4;
+- duplicates: 0;
+- train examples: 4;
+- holdout examples: 0 because the pilot is below five examples.
+
+The four transitions are three independently generated slug failures and the
+PunkScout Go compiler repair. An automated scan found no strong secret,
+copyright or license markers, and the three-message JSONL structure validated.
+The manifest deliberately retains:
+
+```json
+{
+  "manual_license_and_secret_review_required": true,
+  "training_authorized": false
+}
+```
+
+No adapter training should begin from this pilot. Continue collecting varied
+diagnosed repairs until there is a meaningful holdout and enough language/task
+diversity to measure generalization.

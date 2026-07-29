@@ -148,6 +148,8 @@ func main() {
 		err = runTrace(os.Args[2:], os.Stdout, os.Stderr)
 	case "eval":
 		err = runEval(&cfg, os.Args[2:], os.Stdout, os.Stderr)
+	case "dataset":
+		err = runDataset(os.Args[2:], os.Stdout, os.Stderr)
 	case "version", "--version", "-version":
 		fmt.Println("EutherPunk", version)
 	case "help", "--help", "-h":
@@ -643,6 +645,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  eutherpunk worker --workspace <directory> --task <task> [--apply]")
 	fmt.Fprintln(os.Stderr, "  eutherpunk trace finalize --result <worker.json> --workspace <directory> --diagnostics <file> --verdict accepted|rejected --output <trace.json>")
 	fmt.Fprintln(os.Stderr, "  eutherpunk eval run --suite <suite.json> --output <directory> [--case <id>]")
+	fmt.Fprintln(os.Stderr, "  eutherpunk dataset build --input <trace-or-directory> [--input ...] --output <directory>")
 	fmt.Fprintln(os.Stderr, "  eutherpunk version")
 }
 
