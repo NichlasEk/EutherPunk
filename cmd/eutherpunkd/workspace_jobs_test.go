@@ -32,13 +32,23 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 			})
 			return
 		}
+		if workspaceRequestHasProperty(request, "content") {
+			_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+				Message: ollamaMessage{
+					Role:    "assistant",
+					Content: `{"content":"print('hej')\n"}`,
+				},
+				Done: true,
+			})
+			return
+		}
 		close(started)
 		<-release
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
 			Message: ollamaMessage{
 				Role: "assistant",
 				Content: `{"message":"klart","files":[` +
-					`{"path":"main.lua","content":"print('hej')\n"}]}`,
+					`{"path":"main.lua","instruction":"Skriv ett komplett program."}]}`,
 			},
 			Done: true,
 		})
@@ -167,16 +177,23 @@ func TestWorkspaceJobRepairsRejectedProposal(t *testing.T) {
 			})
 			return
 		}
+		if !workspaceRequestHasProperty(request, "content") {
+			response := fmt.Sprintf(
+				`{"message":"varv %d","files":[{"path":"game.js","instruction":"Reparera rotationslogiken fullständigt."}]}`,
+				generationCalls+1,
+			)
+			_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+				Message: ollamaMessage{Role: "assistant", Content: response},
+				Done:    true,
+			})
+			return
+		}
 		generationCalls++
 		content := "const rotation = 'trasig';\n"
 		if generationCalls > 1 {
 			content = "const rotation = 'fungerar';\n"
 		}
-		response := fmt.Sprintf(
-			`{"message":"varv %d","files":[{"path":"game.js","content":%q}]}`,
-			generationCalls,
-			content,
-		)
+		response := fmt.Sprintf(`{"content":%q}`, content)
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
 			Message: ollamaMessage{Role: "assistant", Content: response},
 			Done:    true,

@@ -2122,7 +2122,7 @@ func askOllama(ctx context.Context, ollamaURL, model, system string, messages []
 	return out.Message.Content, nil
 }
 
-func askWorkspaceOllama(
+func askWorkspaceOllamaSingleCall(
 	ctx context.Context,
 	ollamaURL, model, system string,
 	messages []ollamaMessage,

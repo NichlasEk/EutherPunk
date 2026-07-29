@@ -38,6 +38,12 @@ func TestWorkspaceSnapshotSkipsSecretsBinaryAndSymlinks(t *testing.T) {
 	if !strings.Contains(context, "main.lua") || !strings.Contains(context, "print('hej')") {
 		t.Fatalf("snapshot missing safe file: %s", context)
 	}
+	if strings.Contains(context, "```eutherpunk_files") {
+		t.Fatalf("snapshot tells the model to put files in chat: %s", context)
+	}
+	if !strings.Contains(context, "separat strukturerad filkanal") {
+		t.Fatalf("snapshot does not describe the structured file channel: %s", context)
+	}
 	for _, forbidden := range []string{"TOKEN=secret", "outside-secret", "binary.bin"} {
 		if strings.Contains(context, forbidden) {
 			t.Fatalf("snapshot contains %q: %s", forbidden, context)

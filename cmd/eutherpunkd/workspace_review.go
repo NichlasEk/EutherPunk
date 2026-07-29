@@ -149,7 +149,20 @@ func askWorkspaceStructured(
 	format any,
 	numPredict int,
 ) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	return askWorkspaceStructuredTimeout(
+		ctx, ollamaURL, model, system, messages, format, numPredict, 2*time.Minute,
+	)
+}
+
+func askWorkspaceStructuredTimeout(
+	ctx context.Context,
+	ollamaURL, model, system string,
+	messages []ollamaMessage,
+	format any,
+	numPredict int,
+	timeout time.Duration,
+) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	think := false
 	payload := ollamaChatRequest{

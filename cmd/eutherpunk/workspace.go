@@ -769,8 +769,7 @@ func workspaceContext(workspace workspaceState) (string, error) {
 	var out strings.Builder
 	out.WriteString("LOKAL KODARBETSYTA\n")
 	out.WriteString("Du får läsa följande snapshot, men du har ingen direkt fil- eller shellåtkomst.\n")
-	out.WriteString("Om filer behöver skapas eller ändras, avsluta svaret med exakt ett block:\n")
-	out.WriteString("```eutherpunk_files\n{\"files\":[{\"path\":\"relativ/sökväg\",\"content\":\"hela filinnehållet\"}]}\n```\n")
+	out.WriteString("Servern har en separat strukturerad filkanal. Lägg aldrig filinnehåll eller kodblock i chattsvaret.\n")
 	out.WriteString("Använd endast relativa sökvägar. Ta aldrig med hemligheter. Ett lokalt godkännande krävs innan något skrivs.\n\n")
 	out.WriteString("Arbetsyta: ")
 	out.WriteString(filepath.Base(workspace.Root))

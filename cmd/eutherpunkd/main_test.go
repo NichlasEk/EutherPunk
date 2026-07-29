@@ -10,8 +10,10 @@ import (
 	"unicode/utf8"
 )
 
-func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
+func TestAskWorkspaceOllamaPlansThenGeneratesFilesSeparately(t *testing.T) {
+	var calls int
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
 		var request ollamaChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
@@ -19,27 +21,42 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 		if request.Format == nil {
 			t.Fatal("workspace request did not include a JSON schema")
 		}
-		if request.Options["num_ctx"] != float64(workspaceOllamaNumCtx) {
+		if request.Options["num_ctx"] != float64(12288) {
 			t.Fatalf("num_ctx = %#v", request.Options["num_ctx"])
 		}
 		if request.Think == nil || *request.Think {
 			t.Fatalf("workspace thinking must be disabled: %#v", request.Think)
 		}
-		if !request.Stream {
-			t.Fatal("workspace response must stream for activity updates")
+		if request.Stream {
+			t.Fatal("short structured workspace calls must not stream")
 		}
-		if len(request.Messages) == 0 ||
-			!strings.Contains(request.Messages[0].Content, "Kontrollera särskilt att varje") {
-			t.Fatalf("workspace system prompt saknar slutkontroll: %#v", request.Messages)
+		if workspaceRequestHasProperty(request, "content") {
+			if request.Options["num_predict"] != float64(6144) {
+				t.Fatalf("file num_predict = %#v", request.Options["num_predict"])
+			}
+			if !strings.Contains(request.Messages[0].Content, "exakt en komplett fil") {
+				t.Fatalf("file system prompt = %#v", request.Messages)
+			}
+			_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+				Message: ollamaMessage{
+					Role:    "assistant",
+					Content: `{"content":"print('hej')\n"}`,
+				},
+				Done: true,
+			})
+			return
 		}
-		if !strings.Contains(request.Messages[0].Content, "Fråga aldrig först om") {
-			t.Fatalf("workspace system prompt saknar direkt filförslag: %#v", request.Messages)
+		if request.Options["num_predict"] != float64(768) {
+			t.Fatalf("planner num_predict = %#v", request.Options["num_predict"])
+		}
+		if !strings.Contains(request.Messages[0].Content, "Skriv ingen källkod") {
+			t.Fatalf("planner system prompt = %#v", request.Messages)
 		}
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
 			Message: ollamaMessage{
 				Role: "assistant",
 				Content: `{"message":"klart","files":[` +
-					`{"path":"main.lua","content":"print('hej')\n"}]}`,
+					`{"path":"main.lua","instruction":"Skriv ett komplett program."}]}`,
 			},
 			Done: true,
 		})
@@ -63,9 +80,12 @@ func TestAskWorkspaceOllamaUsesSchemaAndDecodesFiles(t *testing.T) {
 	if message != "klart" || len(files) != 1 || files[0].Path != "main.lua" {
 		t.Fatalf("message=%q, files=%#v", message, files)
 	}
+	if calls != 2 || files[0].Content != "print('hej')\n" {
+		t.Fatalf("calls=%d files=%#v", calls, files)
+	}
 	if len(progress) < 3 ||
-		!strings.Contains(progress[0], "strukturerat") ||
-		!strings.Contains(progress[len(progress)-1], "giltigt") {
+		!strings.Contains(progress[0], "filplan") ||
+		!strings.Contains(progress[len(progress)-1], "filkanalen") {
 		t.Fatalf("progress=%#v", progress)
 	}
 }
