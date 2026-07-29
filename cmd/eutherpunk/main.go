@@ -175,7 +175,11 @@ func assist(cfg cliConfig, initialPrompt string) error {
 
 	fmt.Printf("EutherPunk %s\n", version)
 	fmt.Println("Försiktig förhandsversion: chatt, systeminformation och avgränsade kodarbetsytor.")
-	fmt.Println("CLI:t kan bara läsa vald arbetsyta och frågar alltid innan filer ändras.")
+	if cfg.settings.Exists && cfg.settings.Files == permissionAuto {
+		fmt.Println("Arbetsytefiler: AUTO — godkänd kod skrivs automatiskt, endast i vald arbetsyta.")
+	} else {
+		fmt.Println("CLI:t kan bara läsa vald arbetsyta och frågar alltid innan filer ändras.")
+	}
 	fmt.Println("Valfria kommandon och administratörsåtkomst är avstängda.")
 	fmt.Println("Skriv /help för hjälp eller /exit för att avsluta.")
 	fmt.Printf("Modell: %s\n\n", cfg.model)
@@ -313,6 +317,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("/memory visar eller ändrar det lokala långtidsminnet.")
 			fmt.Println("/settings visar eller sparar permanenta inställningar.")
 			fmt.Println("/permissions visar eller ändrar lokala behörigheter.")
+			fmt.Println("/permissions files auto följer, reparerar och skriver kodjobb automatiskt i vald arbetsyta.")
 			fmt.Println("/workspace init <katalog> skapar och väljer en avgränsad kodarbetsyta.")
 			fmt.Println("/workspace use <katalog> väljer en befintlig kodarbetsyta.")
 			fmt.Println("/job visar det aktiva kodjobbets bygglogg och status.")
