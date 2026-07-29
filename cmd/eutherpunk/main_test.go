@@ -112,6 +112,9 @@ func TestRequestWorkspaceAnswerUsesJobLifecycle(t *testing.T) {
 			if !request.LocalWorkspace || !strings.Contains(request.ClientContext, "LOKAL KODARBETSYTA") {
 				t.Fatalf("workspace request = %#v", request)
 			}
+			if len(request.Messages) != 1 || request.Messages[0].Content != "skapa" {
+				t.Fatalf("workspace messages must not carry the /chat prefix: %#v", request.Messages)
+			}
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
 				ID:     "job-1",

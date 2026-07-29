@@ -406,7 +406,7 @@ func workspaceJobRequestBody(
 	}
 	clientContext += toolContext
 	return json.Marshal(chatRequest{
-		Messages:       chatOnlyMessages(messages),
+		Messages:       append([]chatMessage(nil), messages...),
 		Model:          cfg.model,
 		ClientContext:  clientContext,
 		LocalWorkspace: true,
