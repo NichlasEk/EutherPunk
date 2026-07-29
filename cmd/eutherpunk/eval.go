@@ -336,6 +336,7 @@ func executeEvalCase(
 			"--task", test.Task,
 			"--output", resultPath,
 			"--apply",
+			"--verifier-driven",
 			"--timeout", timeout.String(),
 		},
 		&workerJSON,
@@ -358,7 +359,7 @@ func executeEvalCase(
 	for verifierErr != nil &&
 		result.RepairRounds < 2 &&
 		worker.JobID != "" &&
-		worker.Status == "completed" &&
+		workerResultCanRepair(worker) &&
 		len(worker.Files) > 0 {
 		result.RepairRounds++
 		_, _ = fmt.Fprintf(
@@ -444,6 +445,10 @@ func executeEvalCase(
 		result.PreservationPassed,
 	)
 	return result
+}
+
+func workerResultCanRepair(worker workerResult) bool {
+	return worker.Status == "completed" || worker.Status == "needs_review"
 }
 
 func runEvalVerifiedRepair(

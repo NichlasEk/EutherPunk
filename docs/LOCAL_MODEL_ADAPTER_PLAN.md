@@ -420,3 +420,52 @@ The latency increase comes from switching between two large models on one
 24 GB GPU. The independent reviewer is therefore accepted as the quality
 configuration but the adapter remains opt-in until that latency tradeoff is
 chosen deliberately or a smaller reviewer passes the same frozen tests.
+
+## Verifier-driven creative recovery
+
+The frozen `evaluation/creative-v1/suite.json` contains a dependency-free Neon
+Life browser project. Its preserved HTML scene calls a deliberately unfinished
+four-function JavaScript engine, and `node --test` checks grid construction,
+finite Conway evolution, immutability, cell toggling and deterministic random
+seeding.
+
+The first exploratory run exposed four harness weaknesses:
+
+- the planner emitted four entries for the same `engine.js` path;
+- an executable draft could be retained but not repaired after `needs_review`;
+- auth-disabled loopback evaluation received HTTP 403 on the repair endpoint;
+- raw assertion diffs did not reliably tell the coding model which source
+  expression caused the failure.
+
+The recovery flow now normalizes and merges duplicate plan paths before file
+generation, rejects duplicate paths again at the CLI boundary, and permits a
+saved draft to receive verifier diagnostics. The auth-disabled exception is
+limited to loopback peers. Evaluation workers select `--verifier-driven`, so a
+fallible model review cannot mutate the candidate before the executable check.
+On failure, Qwen acts as a diagnostic analyst and turns the raw verifier output
+into grounded source-level issues; the adapted Devstral model then repairs the
+same file. The next executable run, not another model opinion, decides.
+
+The final unchanged creative-v1 run used:
+
+```text
+coder:    eutherpunk-devstral-repair:pilot-m3
+analyst:  qwen3-coder:30b
+suite:    eutherpunk-neon-life-repair 1.0.0
+suite SHA-256: 6c1a14e1e405c298955e1c35e7edd67a51c81f1f0f640af93807104de17002be
+```
+
+It produced one planned `engine.js`, failed the first executable check,
+received a concrete toggle-copy diagnosis, repaired once, and finished in
+98.806 seconds:
+
+| Metric | Result |
+| --- | ---: |
+| Executable verifier | 1/1 |
+| Protected-file preservation | 1/1 |
+| Worker completion | 1/1 |
+| Verifier repair rounds | 1 |
+
+No manual source edit was made in the accepted run. The resulting private
+evaluation output remains ignored; only the immutable suite and harness code
+belong in Git.

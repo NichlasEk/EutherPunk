@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 )
@@ -76,7 +77,9 @@ schemat. Skriv ingen källkod, inga kodblock och inget resonemang. "message" är
 högst två korta meningar till användaren. Varje filpost anger en relativ path
 och en precis instruction om filens ansvar, gränssnitt och acceptanskrav.
 Välj minsta antal filer. När användaren ber att skapa eller ändra kod ska planen
-innehålla filerna direkt; fråga inte om lov eftersom CLI:t gör det separat.`
+innehålla filerna direkt; fråga inte om lov eftersom CLI:t gör det separat.
+Varje relativ filsökväg får förekomma högst en gång. Samla alla ändringar för
+samma fil i en enda filpost.`
 	format := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -113,18 +116,64 @@ innehålla filerna direkt; fråga inte om lov eftersom CLI:t gör det separat.`
 	if len(plan.Files) > 16 {
 		return workspacePlan{}, errors.New("filplanen innehåller för många filer")
 	}
+	normalized := make([]workspacePlanFile, 0, len(plan.Files))
+	byPath := make(map[string]int, len(plan.Files))
 	for i := range plan.Files {
-		plan.Files[i].Path = strings.TrimSpace(plan.Files[i].Path)
-		plan.Files[i].Instruction = strings.TrimSpace(plan.Files[i].Instruction)
-		if plan.Files[i].Path == "" || plan.Files[i].Instruction == "" {
+		file := plan.Files[i]
+		file.Path = normalizeWorkspacePlanPath(file.Path)
+		file.Instruction = strings.TrimSpace(file.Instruction)
+		if file.Path == "" || file.Path == "." || file.Instruction == "" {
 			return workspacePlan{}, errors.New("filplanen innehåller en tom sökväg eller instruktion")
 		}
-		if len(plan.Files[i].Instruction) > 2000 {
+		if len(file.Instruction) > 2000 {
 			return workspacePlan{}, errors.New("filplanens instruktion är för lång")
 		}
+		key := strings.ToLower(file.Path)
+		if index, exists := byPath[key]; exists {
+			merged := mergeWorkspacePlanInstructions(
+				normalized[index].Instruction,
+				file.Instruction,
+			)
+			if len(merged) > 2000 {
+				return workspacePlan{}, fmt.Errorf(
+					"de sammanslagna instruktionerna för %q är för långa",
+					file.Path,
+				)
+			}
+			normalized[index].Instruction = merged
+			continue
+		}
+		byPath[key] = len(normalized)
+		normalized = append(normalized, file)
 	}
+	plan.Files = normalized
 	plan.Message = compactWorkspaceMessage(plan.Message)
 	return plan, nil
+}
+
+func normalizeWorkspacePlanPath(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	if value == "" {
+		return ""
+	}
+	return path.Clean(value)
+}
+
+func mergeWorkspacePlanInstructions(existing, additional string) string {
+	existing = strings.TrimSpace(existing)
+	additional = strings.TrimSpace(additional)
+	if additional == "" {
+		return existing
+	}
+	if existing == "" {
+		return additional
+	}
+	for _, instruction := range strings.Split(existing, "\n- ") {
+		if strings.TrimSpace(instruction) == additional {
+			return existing
+		}
+	}
+	return existing + "\n- " + additional
 }
 
 func generateWorkspaceFileOllama(

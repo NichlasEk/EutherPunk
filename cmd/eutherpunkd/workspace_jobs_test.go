@@ -142,6 +142,70 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 	}
 }
 
+func TestVerifierDrivenWorkspaceJobSkipsModelSelfReview(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if workspaceRequestHasProperty(request, "accepted") {
+			t.Fatal("verifier-driven job invoked model self-review")
+		}
+		content := `{"message":"ready","files":[{"path":"engine.js","instruction":"repair engine"}]}`
+		if workspaceRequestHasProperty(request, "content") {
+			content = `{"content":"export const answer = 42;\n"}`
+		}
+		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: content},
+			Done:    true,
+		})
+	}))
+	defer ollama.Close()
+
+	workspaceJobsMu.Lock()
+	workspaceJobs = map[string]*workspaceJob{
+		"verified-job": {
+			ID:     "verified-job",
+			Status: "running",
+			Model:  "coder-model",
+			user:   "local",
+			task:   "repair engine",
+		},
+	}
+	workspaceJobsMu.Unlock()
+	t.Cleanup(func() {
+		workspaceJobsMu.Lock()
+		workspaceJobs = map[string]*workspaceJob{}
+		workspaceJobsMu.Unlock()
+	})
+
+	runWorkspaceJob(
+		context.Background(),
+		serverConfig{ollamaURL: ollama.URL, model: "chat-model"},
+		"verified-job",
+		"coder-model",
+		"system",
+		[]ollamaMessage{{Role: "user", Content: "repair engine"}},
+		true,
+	)
+
+	workspaceJobsMu.Lock()
+	job := workspaceJobViewLocked(workspaceJobs["verified-job"])
+	workspaceJobsMu.Unlock()
+	if job.Status != "completed" || len(job.Files) != 1 || job.DraftRev != 1 {
+		t.Fatalf("job = %#v", job)
+	}
+	found := false
+	for _, activity := range job.Activities {
+		if strings.Contains(activity.Message, "extern körbar verifierare") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("activities = %#v", job.Activities)
+	}
+}
+
 func workspaceRequestHasProperty(request ollamaChatRequest, property string) bool {
 	format, ok := request.Format.(map[string]any)
 	if !ok {
@@ -183,6 +247,155 @@ func TestWorkspaceJobAllowsExplicitlyDisabledLocalAuth(t *testing.T) {
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("start status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkspaceRepairAllowsDisabledAuthOnlyFromLoopback(t *testing.T) {
+	cfg := serverConfig{authRequired: false}
+	principal := authPrincipal{AuthMode: "disabled"}
+	for _, test := range []struct {
+		remote string
+		want   bool
+	}{
+		{remote: "127.0.0.1:42000", want: true},
+		{remote: "[::1]:42000", want: true},
+		{remote: "192.168.32.10:42000", want: false},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/repair", nil)
+		req.RemoteAddr = test.remote
+		if got := workspaceRepairAllowed(cfg, req, principal); got != test.want {
+			t.Fatalf("remote %q allowed=%t, want %t", test.remote, got, test.want)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/repair", nil)
+	req.RemoteAddr = "127.0.0.1:42000"
+	if workspaceRepairAllowed(serverConfig{authRequired: true}, req, principal) {
+		t.Fatal("disabled principal bypassed required authentication")
+	}
+	if !workspaceRepairAllowed(
+		serverConfig{authRequired: true},
+		req,
+		authPrincipal{AuthMode: "cli_token"},
+	) {
+		t.Fatal("CLI token was rejected")
+	}
+}
+
+func TestWorkspaceRepairUsesSavedDraft(t *testing.T) {
+	workspaceJobsMu.Lock()
+	workspaceJobs = map[string]*workspaceJob{
+		"draft-job": {
+			ID:      "draft-job",
+			Status:  "completed",
+			Model:   "coder-model",
+			Message: "review rejected",
+			DraftFiles: []workspaceResponseFile{{
+				Path:    "engine.js",
+				Content: "export const broken = true;\n",
+			}},
+			DraftRev: 1,
+			user:     "local",
+			task:     "repair engine",
+		},
+	}
+	workspaceJobsMu.Unlock()
+	t.Cleanup(func() {
+		workspaceJobsMu.Lock()
+		workspaceJobs = map[string]*workspaceJob{}
+		workspaceJobsMu.Unlock()
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/eutherpunk/workspace/jobs/draft-job/repair",
+		strings.NewReader(`{"diagnostics":"engine.js failed"}`),
+	)
+	req.RemoteAddr = "127.0.0.1:42000"
+	req.SetPathValue("id", "draft-job")
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authPrincipal{
+		User:     "local",
+		AuthMode: "disabled",
+	}))
+	rec := httptest.NewRecorder()
+	handleWorkspaceJobRepair(serverConfig{
+		ollamaURL:    "http://127.0.0.1:1",
+		authRequired: false,
+	})(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("repair status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVerifiedRepairUsesDiagnosticAnalystAndKeepsFiles(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		content := `{"content":"export const answer = 42;\n"}`
+		if workspaceRequestHasProperty(request, "issues") &&
+			!workspaceRequestHasProperty(request, "accepted") {
+			content = `{"issues":["app.js returns 0 where the verifier requires 42"]}`
+		}
+		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: content},
+			Done:    true,
+		})
+	}))
+	defer ollama.Close()
+
+	workspaceJobsMu.Lock()
+	workspaceJobs = map[string]*workspaceJob{
+		"verified-repair": {
+			ID:      "verified-repair",
+			Status:  "running",
+			Model:   "coder-model",
+			Message: "repair",
+			user:    "local",
+			task:    "make answer 42",
+		},
+	}
+	workspaceJobsMu.Unlock()
+	t.Cleanup(func() {
+		workspaceJobsMu.Lock()
+		workspaceJobs = map[string]*workspaceJob{}
+		workspaceJobsMu.Unlock()
+	})
+
+	runWorkspaceJobLocalRepair(
+		context.Background(),
+		serverConfig{
+			ollamaURL:   ollama.URL,
+			model:       "chat-model",
+			reviewModel: "reviewer-model",
+		},
+		"verified-repair",
+		"coder-model",
+		"make answer 42",
+		"repair",
+		[]workspaceResponseFile{{
+			Path:    "app.js",
+			Content: "export const answer = 0;\n",
+		}},
+		"expected 42, got 0",
+	)
+
+	workspaceJobsMu.Lock()
+	job := workspaceJobViewLocked(workspaceJobs["verified-repair"])
+	workspaceJobsMu.Unlock()
+	if job.Status != "completed" ||
+		len(job.Files) != 1 ||
+		!strings.Contains(job.Files[0].Content, "42") ||
+		job.DraftRev != 1 {
+		t.Fatalf("job = %#v", job)
+	}
+	activityText := ""
+	for _, activity := range job.Activities {
+		activityText += activity.Message + "\n"
+	}
+	if !strings.Contains(activityText, "Verifieringsdiagnos") ||
+		!strings.Contains(activityText, "utan ett nytt modellomdöme") {
+		t.Fatalf("activities = %s", activityText)
 	}
 }
 

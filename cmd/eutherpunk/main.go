@@ -32,6 +32,7 @@ type cliConfig struct {
 	credentials        authCredentials
 	workspace          workspaceState
 	nonInteractiveAuth bool
+	verifierDriven     bool
 }
 
 type chatMessage struct {
@@ -45,6 +46,7 @@ type chatRequest struct {
 	Messages       []chatMessage `json:"messages,omitempty"`
 	ClientContext  string        `json:"client_context,omitempty"`
 	LocalWorkspace bool          `json:"local_workspace,omitempty"`
+	VerifierDriven bool          `json:"verifier_driven,omitempty"`
 }
 
 type chatResponse struct {

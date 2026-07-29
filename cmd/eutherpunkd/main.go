@@ -85,6 +85,7 @@ type chatRequest struct {
 	System         string        `json:"system,omitempty"`
 	ClientContext  string        `json:"client_context,omitempty"`
 	LocalWorkspace bool          `json:"local_workspace,omitempty"`
+	VerifierDriven bool          `json:"verifier_driven,omitempty"`
 	Images         []string      `json:"images,omitempty"`
 	Messages       []chatMessage `json:"messages,omitempty"`
 }

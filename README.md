@@ -243,6 +243,20 @@ are modified. Result statuses are `completed`, `needs_review`, `no_change`,
 `failed`, or `cancelled`. A timeout can be selected with `--timeout`, up to
 30 minutes.
 
+Parent agents that provide a real executable verifier can select
+`--verifier-driven`. This skips the model's mutating self-review before the
+parent runs its verifier. When the parent returns bounded failing diagnostics,
+the independent review model first reduces them to concrete source-level
+causes, the workspace model repairs the saved draft, and the parent verifies
+again. The raw diagnostics are retained and remain authoritative. This mode
+does not run arbitrary commands, choose a verifier, or weaken workspace
+boundaries by itself.
+
+The normal interactive CLI does not claim to have an external verifier. It
+does, however, run its bounded syntax and browser checks against saved
+`needs_review` checkpoints. Concrete failures from those checks are returned
+to the model automatically instead of discarding the draft.
+
 Worker JSON includes the complete bounded revision history under `drafts`.
 It also records the bounded pre-job workspace under `initial_files`, allowing
 verified tools to distinguish a real repair from a repeated final answer.
@@ -271,12 +285,22 @@ repository.
 The repository contains immutable versioned suites. V1 is the original
 three-case Go baseline; V2 adds JavaScript, Lua, Rust and a two-file Go repair;
 V3 adds twenty distinct dependency-free repair problems across the four
-languages. Run the current diverse suite from a clean output path:
+languages. `creative-v1` adds the dependency-free Neon Life browser project
+that exposed duplicate plan paths and verifier-repair failures. Run the current
+diverse suite from a clean output path:
 
 ```bash
 eutherpunk eval run \
   --suite evaluation/v3/suite.json \
   --output training/outputs/devstral-diverse-v3
+```
+
+Run the creative regression separately:
+
+```bash
+eutherpunk eval run \
+  --suite evaluation/creative-v1/suite.json \
+  --output training/outputs/neon-life-creative-v1
 ```
 
 Use `--case go-compiler-repair` for one case. Every case gets an isolated
@@ -290,11 +314,17 @@ seed workspace. A seed that already passes is rejected as an invalid repair
 case. Its failing diagnostics and initial files are retained in the final trace,
 so a first-pass model success is still a genuine verified repair transition.
 
-If the executable verifier fails an otherwise completed proposal, the evaluator
-sends the bounded real diagnostics back to the existing server job, applies the
-new draft and verifies it again. This loop is limited to two rounds. The worker
-result, trace and diagnostics retain all revisions and verification rounds
-instead of replacing the failed evidence.
+Evaluation workers use verifier-driven mode. If the executable verifier fails
+a completed or `needs_review` proposal, the evaluator sends the bounded real
+diagnostics back to the existing server job. The independent diagnostic model
+derives concrete source-level causes, the coding model repairs the same saved
+draft, and the evaluator applies and verifies it again. This loop is limited to
+two rounds. The worker result, trace and diagnostics retain all revisions and
+verification rounds instead of replacing the failed evidence.
+
+Local auth-disabled repair is accepted only from an actual loopback peer.
+Production repair still requires an EutherID-derived CLI token; an auth-disabled
+LAN client cannot use the exception.
 
 Evaluation suites are trusted developer inputs. Verifiers are invoked directly
 without a shell and are restricted to `go`, `node`, `cargo`, `lua` and `luac`.

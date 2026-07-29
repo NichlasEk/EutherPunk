@@ -142,7 +142,7 @@ func TestExecuteEvalSuiteRepairsFromVerifierDiagnostics(t *testing.T) {
 		}
 		result := workerResult{
 			SchemaVersion:      workerSchemaVersion,
-			Status:             "completed",
+			Status:             "needs_review",
 			Task:               options.Task,
 			Role:               options.Role,
 			Workspace:          options.Workspace,
@@ -284,5 +284,15 @@ func TestLoadFrozenEvalSuite(t *testing.T) {
 	}
 	if diverse.Name != "eutherpunk-repair-diverse" || len(diverse.Cases) != 20 {
 		t.Fatalf("diverse suite = %#v", diverse)
+	}
+
+	creative, err := loadEvalSuite(
+		filepath.Join("..", "..", "evaluation", "creative-v1", "suite.json"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creative.Name != "eutherpunk-neon-life-repair" || len(creative.Cases) != 1 {
+		t.Fatalf("creative suite = %#v", creative)
 	}
 }

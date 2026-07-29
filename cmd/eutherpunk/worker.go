@@ -24,12 +24,13 @@ const (
 )
 
 type workerOptions struct {
-	Workspace string
-	Task      string
-	Role      string
-	Output    string
-	Apply     bool
-	Timeout   time.Duration
+	Workspace      string
+	Task           string
+	Role           string
+	Output         string
+	Apply          bool
+	VerifierDriven bool
+	Timeout        time.Duration
 }
 
 type workerResult struct {
@@ -104,6 +105,7 @@ func runWorker(cfg *cliConfig, args []string, stdout, stderr io.Writer) error {
 	result.Workspace = root
 	cfg.workspace = workspace
 	cfg.nonInteractiveAuth = true
+	cfg.verifierDriven = options.VerifierDriven
 
 	initialFiles, err := readWorkspaceFiles(workspace)
 	if err != nil {
@@ -247,6 +249,12 @@ func parseWorkerOptions(args []string, stderr io.Writer) (workerOptions, error) 
 	flags.StringVar(&options.Role, "role", options.Role, "worker role (implementer)")
 	flags.StringVar(&options.Output, "output", "", "also write the JSON result to this file")
 	flags.BoolVar(&options.Apply, "apply", false, "write draft checkpoints inside the workspace")
+	flags.BoolVar(
+		&options.VerifierDriven,
+		"verifier-driven",
+		false,
+		"let an external executable verifier drive repair instead of model self-review",
+	)
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "job timeout (maximum 30m)")
 	if err := flags.Parse(args); err != nil {
 		return workerOptions{}, err

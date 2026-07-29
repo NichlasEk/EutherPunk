@@ -478,6 +478,7 @@ func workspaceJobRequestBody(
 		Model:          cfg.model,
 		ClientContext:  clientContext,
 		LocalWorkspace: true,
+		VerifierDriven: cfg.verifierDriven,
 	})
 }
 
@@ -533,17 +534,22 @@ func waitWorkspaceJob(
 		}
 		switch job.Status {
 		case "completed":
+			reviewRejected := len(job.Files) == 0 && len(job.DraftFiles) > 0
+			candidate := job
+			if reviewRejected {
+				candidate.Files = append([]workspaceFile(nil), job.DraftFiles...)
+			}
 			totalBytes := 0
-			for _, file := range job.Files {
+			for _, file := range candidate.Files {
 				totalBytes += len(file.Content)
 			}
 			_, _ = fmt.Fprintf(
 				output,
 				"Lokal kontroll: granskar %d fil(er), %d byte…\r\n",
-				len(job.Files),
+				len(candidate.Files),
 				totalBytes,
 			)
-			message, proposal, err := validateWorkspaceJobResult(job)
+			message, proposal, err := validateWorkspaceJobResult(candidate)
 			if err != nil {
 				_, _ = fmt.Fprintf(output, "Lokal kontroll stoppade förslaget: %v\r\n", err)
 				return "", fileProposal{}, err
@@ -584,6 +590,14 @@ func waitWorkspaceJob(
 				nextProgress = 10 * time.Second
 				pollImmediately = true
 				continue
+			}
+			if reviewRejected {
+				_, _ = fmt.Fprintf(
+					output,
+					"CHECKPOINT %d passerade den lokala körkontrollen men är fortfarande markerad för granskning.\r\n",
+					job.DraftRev,
+				)
+				return message, fileProposal{}, nil
 			}
 			_, _ = io.WriteString(output, "Lokal kontroll godkänd; visar förhandsvisning.\r\n")
 			return message, proposal, nil
@@ -715,10 +729,8 @@ func validateWorkspaceJobResult(job workspaceJobResponse) (string, fileProposal,
 	if len(proposal.Files) > maxProposalFiles {
 		return "", fileProposal{}, errors.New("servern returnerade för många filförslag")
 	}
-	for _, file := range proposal.Files {
-		if err := validateProposedFile(file); err != nil {
-			return "", fileProposal{}, err
-		}
+	if err := validateWorkspaceFileSet(proposal.Files); err != nil {
+		return "", fileProposal{}, err
 	}
 	return job.Message, proposal, nil
 }
@@ -1049,10 +1061,8 @@ func parseFileProposal(answer string) (fileProposal, string, bool, error) {
 	if len(proposal.Files) == 0 || len(proposal.Files) > maxProposalFiles {
 		return fileProposal{}, answer, false, fmt.Errorf("filförslaget måste innehålla 1-%d filer", maxProposalFiles)
 	}
-	for _, file := range proposal.Files {
-		if err := validateProposedFile(file); err != nil {
-			return fileProposal{}, answer, false, err
-		}
+	if err := validateWorkspaceFileSet(proposal.Files); err != nil {
+		return fileProposal{}, answer, false, err
 	}
 	visible := strings.TrimSpace(answer[:start] + answer[jsonStart+endOffset+3:])
 	return proposal, visible, true, nil
@@ -1074,6 +1084,24 @@ func validateProposedFile(file workspaceFile) error {
 	return nil
 }
 
+func validateWorkspaceFileSet(files []workspaceFile) error {
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		if err := validateProposedFile(file); err != nil {
+			return err
+		}
+		clean := filepath.ToSlash(
+			filepath.Clean(filepath.FromSlash(strings.TrimSpace(file.Path))),
+		)
+		key := strings.ToLower(clean)
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("duplicerad filsökväg %q", file.Path)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
+}
+
 func applyWorkspaceDraft(
 	workspace workspaceState,
 	files []workspaceFile,
@@ -1088,10 +1116,10 @@ func applyWorkspaceDraft(
 	if err != nil {
 		return err
 	}
+	if err := validateWorkspaceFileSet(files); err != nil {
+		return err
+	}
 	for _, file := range files {
-		if err := validateProposedFile(file); err != nil {
-			return err
-		}
 		path := filepath.ToSlash(file.Path)
 		if !backedUp[path] {
 			if err := backupWorkspaceFile(root, file.Path); err != nil {

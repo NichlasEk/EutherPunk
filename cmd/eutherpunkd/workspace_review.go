@@ -23,6 +23,10 @@ type workspaceQualityReview struct {
 	Issues   []string `json:"issues"`
 }
 
+type workspaceDiagnosticAnalysis struct {
+	Issues []string `json:"issues"`
+}
+
 func reviewWorkspaceProposalOllama(
 	ctx context.Context,
 	ollamaURL, model, task, message string,
@@ -173,6 +177,73 @@ func repairWorkspaceProposalOllama(
 		repaired[index].Content = content
 	}
 	return message, repaired, nil
+}
+
+func analyzeWorkspaceDiagnosticsOllama(
+	ctx context.Context,
+	ollamaURL, model, task string,
+	files []workspaceResponseFile,
+	diagnostics string,
+) ([]string, error) {
+	proposalJSON, err := json.Marshal(files)
+	if err != nil {
+		return nil, err
+	}
+	if len(proposalJSON) > maxWorkspaceReviewBytes {
+		return nil, errors.New("filförslaget är för stort för diagnostolkning")
+	}
+	diagnostics = strings.TrimSpace(diagnostics)
+	if len(diagnostics) > 16*1024 {
+		diagnostics = diagnostics[:16*1024]
+	}
+	system := `Du är en diagnostolk mellan en körbar verifierare och en kodmodell.
+Härled endast fel som stöds av verifierarens faktiska utdata och kandidatens
+källkod. Identifiera den konkreta felorsaken i koden, inte bara det misslyckade
+testets symptom. Ange fil, relevant uttryck eller kontrollflöde och den minsta
+beteendeförändring som krävs. Hitta inte på nya krav och gör ingen kosmetisk
+granskning. Svara endast med JSON enligt schemat.`
+	user := fmt.Sprintf(
+		"UPPGIFT:\n%s\n\nKANDIDATFILER:\n%s\n\nVERIFIERARENS UTDATA:\n%s",
+		strings.TrimSpace(task),
+		proposalJSON,
+		diagnostics,
+	)
+	format := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"issues": map[string]any{
+				"type":     "array",
+				"minItems": 1,
+				"maxItems": 6,
+				"items":    map[string]any{"type": "string"},
+			},
+		},
+		"required": []string{"issues"},
+	}
+	content, err := askWorkspaceStructured(
+		ctx,
+		ollamaURL,
+		model,
+		system,
+		[]ollamaMessage{{Role: "user", Content: user}},
+		format,
+		1536,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var analysis workspaceDiagnosticAnalysis
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&analysis); err != nil {
+		return nil, fmt.Errorf("tolka verifieringsdiagnos: %w", err)
+	}
+	analysis.Issues = compactReviewIssues(analysis.Issues)
+	if len(analysis.Issues) == 0 {
+		return nil, errors.New("diagnostolken gav ingen konkret felorsak")
+	}
+	return analysis.Issues, nil
 }
 
 func repairWorkspaceFileOllama(

@@ -174,6 +174,26 @@ func TestWorkspaceDraftRevisionsPreserveOriginalBackup(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDraftRejectsDuplicatePathsBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	err := applyWorkspaceDraft(
+		workspaceState{Root: root},
+		[]workspaceFile{
+			{Path: "engine.js", Content: "first\n"},
+			{Path: "./ENGINE.js", Content: "second\n"},
+		},
+		1,
+		map[string]bool{},
+		&strings.Builder{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "duplicerad filsökväg") {
+		t.Fatalf("duplicate error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "engine.js")); !os.IsNotExist(statErr) {
+		t.Fatalf("duplicate draft wrote a file: %v", statErr)
+	}
+}
+
 func TestWorkspaceWriteRejectsSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

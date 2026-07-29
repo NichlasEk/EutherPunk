@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -133,7 +134,7 @@ func handleWorkspaceJobStart(cfg serverConfig) http.HandlerFunc {
 		workspaceJobs[job.ID] = job
 		workspaceJobsMu.Unlock()
 
-		go runWorkspaceJob(ctx, cfg, job.ID, model, system, messages)
+		go runWorkspaceJob(ctx, cfg, job.ID, model, system, messages, req.VerifierDriven)
 		writeJSON(w, http.StatusAccepted, workspaceJobView(job))
 	}
 }
@@ -150,6 +151,7 @@ func runWorkspaceJob(
 	cfg serverConfig,
 	jobID, model, system string,
 	messages []ollamaMessage,
+	verifierDriven bool,
 ) {
 	task := lastUserMessage(messages)
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
@@ -174,12 +176,16 @@ func runWorkspaceJob(
 	)
 	if err == nil && len(files) > 0 {
 		publishWorkspaceDraft(jobID, files)
-		message, files, err = qualityReviewWorkspaceProposal(
-			ctx, cfg, model, task, message, files, progress,
-			func(files []workspaceResponseFile) {
-				publishWorkspaceDraft(jobID, files)
-			},
-		)
+		if verifierDriven {
+			progress("En extern körbar verifierare styr kvalitetsloopen; modellens självgranskning hoppas över.")
+		} else {
+			message, files, err = qualityReviewWorkspaceProposal(
+				ctx, cfg, model, task, message, files, progress,
+				func(files []workspaceResponseFile) {
+					publishWorkspaceDraft(jobID, files)
+				},
+			)
+		}
 	}
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
 		if job.Status == "cancelled" {
@@ -295,7 +301,7 @@ type workspaceRepairRequest struct {
 func handleWorkspaceJobRepair(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := principalFromContext(r.Context())
-		if !ok || principal.AuthMode != "cli_token" {
+		if !ok || !workspaceRepairAllowed(cfg, r, principal) {
 			writeError(w, http.StatusForbidden, errors.New("workspace repairs require CLI authentication"))
 			return
 		}
@@ -317,9 +323,13 @@ func handleWorkspaceJobRepair(cfg serverConfig) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		if job.Status != "completed" || len(job.Files) == 0 {
+		files := append([]workspaceResponseFile(nil), job.Files...)
+		if len(files) == 0 {
+			files = append([]workspaceResponseFile(nil), job.DraftFiles...)
+		}
+		if job.Status != "completed" || len(files) == 0 {
 			workspaceJobsMu.Unlock()
-			writeError(w, http.StatusConflict, errors.New("only a completed proposal can be repaired"))
+			writeError(w, http.StatusConflict, errors.New("only a completed proposal or saved draft can be repaired"))
 			return
 		}
 		if job.localRepairs >= 2 {
@@ -338,7 +348,6 @@ func handleWorkspaceJobRepair(cfg serverConfig) http.HandlerFunc {
 		model := job.Model
 		task := job.task
 		message := job.Message
-		files := append([]workspaceResponseFile(nil), job.Files...)
 		view := workspaceJobViewLocked(job)
 		workspaceJobsMu.Unlock()
 
@@ -347,6 +356,21 @@ func handleWorkspaceJobRepair(cfg serverConfig) http.HandlerFunc {
 		)
 		writeJSON(w, http.StatusAccepted, view)
 	}
+}
+
+func workspaceRepairAllowed(cfg serverConfig, r *http.Request, principal authPrincipal) bool {
+	if principal.AuthMode == "cli_token" {
+		return true
+	}
+	if principal.AuthMode != "disabled" || cfg.authRequired {
+		return false
+	}
+	host := strings.TrimSpace(r.RemoteAddr)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func runWorkspaceJobLocalRepair(
@@ -363,6 +387,31 @@ func runWorkspaceJobLocalRepair(
 			}
 		})
 	}
+	reviewerModel := strings.TrimSpace(cfg.reviewModel)
+	if reviewerModel == "" {
+		reviewerModel = strings.TrimSpace(cfg.model)
+	}
+	if reviewerModel == "" {
+		reviewerModel = model
+	}
+	repairIssues := []string{"Verifierarens råa diagnos:\n" + diagnostics}
+	progress("Den oberoende diagnostolken härleder den konkreta felorsaken.")
+	diagnosed, diagnosisErr := analyzeWorkspaceDiagnosticsOllama(
+		ctx,
+		cfg.ollamaURL,
+		reviewerModel,
+		task,
+		files,
+		diagnostics,
+	)
+	if diagnosisErr != nil {
+		progress("Diagnostolken kunde inte precisera felet; rå verifieringsutdata används.")
+	} else {
+		for _, issue := range diagnosed {
+			progress("Verifieringsdiagnos: " + issue)
+		}
+		repairIssues = append(diagnosed, repairIssues...)
+	}
 	message, files, err := repairWorkspaceProposalOllama(
 		ctx,
 		cfg.ollamaURL,
@@ -370,17 +419,12 @@ func runWorkspaceJobLocalRepair(
 		task,
 		message,
 		files,
-		[]string{"Lokal körkontroll: " + diagnostics},
+		repairIssues,
 		progress,
 	)
 	if err == nil && len(files) > 0 {
 		publishWorkspaceDraft(jobID, files)
-		message, files, err = qualityReviewWorkspaceProposal(
-			ctx, cfg, model, task, message, files, progress,
-			func(files []workspaceResponseFile) {
-				publishWorkspaceDraft(jobID, files)
-			},
-		)
+		progress("Reparationen är klar; den lokala körkontrollen avgör utan ett nytt modellomdöme.")
 	}
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
 		if job.Status == "cancelled" {

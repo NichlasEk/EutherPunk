@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -63,6 +64,38 @@ func TestWorkerProposalOnlyReturnsJSONWithoutWriting(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "worker job-test started") {
 		t.Fatalf("progress = %q", stderr.String())
+	}
+}
+
+func TestWorkerVerifierDrivenSetsServerRequest(t *testing.T) {
+	root := t.TempDir()
+	server := workerTestServer(t, func(request chatRequest) {
+		if !request.VerifierDriven {
+			t.Fatal("worker did not request verifier-driven mode")
+		}
+	})
+	defer server.Close()
+
+	cfg := workerTestConfig(server.URL)
+	var stdout bytes.Buffer
+	if err := runWorker(
+		&cfg,
+		[]string{
+			"--workspace", root,
+			"--task", "Repair worker.txt",
+			"--verifier-driven",
+		},
+		&stdout,
+		&bytes.Buffer{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	var result workerResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
@@ -205,6 +238,91 @@ func TestWorkerNeedsReviewReturnsLastDraft(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "draft.txt")); !os.IsNotExist(err) {
 		t.Fatalf("proposal-only worker wrote rejected draft: %v", err)
+	}
+}
+
+func TestWorkerRepairsBrokenRejectedDraftUsingLocalDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	var repaired atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/repair"):
+			var input struct {
+				Diagnostics string `json:"diagnostics"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(input.Diagnostics, "JavaScript") {
+				t.Fatalf("repair diagnostics = %q", input.Diagnostics)
+			}
+			repaired.Store(true)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:     "job-repair-draft",
+				Status: "running",
+				Model:  "worker-model",
+			})
+		case request.Method == http.MethodPost:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:     "job-repair-draft",
+				Status: "running",
+				Model:  "worker-model",
+			})
+		case request.Method == http.MethodGet && repaired.Load():
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:      "job-repair-draft",
+				Status:  "completed",
+				Model:   "worker-model",
+				Message: "repaired",
+				Files: []workspaceFile{{
+					Path:    "app.js",
+					Content: "export const answer = 42;\n",
+				}},
+				DraftRev: 2,
+				DraftFiles: []workspaceFile{{
+					Path:    "app.js",
+					Content: "export const answer = 42;\n",
+				}},
+			})
+		case request.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:       "job-repair-draft",
+				Status:   "completed",
+				Model:    "worker-model",
+				Message:  "review rejected",
+				DraftRev: 1,
+				DraftFiles: []workspaceFile{{
+					Path:    "app.js",
+					Content: "const broken = ;\n",
+				}},
+			})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer server.Close()
+
+	cfg := workerTestConfig(server.URL)
+	var stdout bytes.Buffer
+	if err := runWorker(
+		&cfg,
+		[]string{"--workspace", root, "--task", "Repair app.js"},
+		&stdout,
+		&bytes.Buffer{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	var result workerResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !repaired.Load() ||
+		result.Status != "completed" ||
+		len(result.Files) != 1 ||
+		!strings.Contains(result.Files[0].Content, "42") {
+		t.Fatalf("result = %#v, repaired=%t", result, repaired.Load())
 	}
 }
 
