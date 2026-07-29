@@ -29,6 +29,10 @@ func TestTraceFinalizeCapturesDraftAndVerifiedCorrection(t *testing.T) {
 		Message:            "review failed",
 		Issues:             []string{"main.go: undefined run"},
 		CheckpointRevision: 2,
+		InitialFiles: []workerResultFile{{
+			Path:    "main.go",
+			Content: "package main\n",
+		}},
 		Files: []workerResultFile{{
 			Path:    "main.go",
 			Bytes:   37,
@@ -91,6 +95,7 @@ func TestTraceFinalizeCapturesDraftAndVerifiedCorrection(t *testing.T) {
 	}
 	if trace.Verdict != "accepted" ||
 		trace.WorkspaceID != filepath.Base(root) ||
+		len(trace.InitialFiles) != 1 ||
 		len(trace.Drafts) != 2 ||
 		len(trace.CorrectedFiles) != 1 {
 		t.Fatalf("trace = %#v", trace)

@@ -44,6 +44,7 @@ type trainingTrace struct {
 	OriginalMessage  string                 `json:"original_message,omitempty"`
 	OriginalIssues   []string               `json:"original_issues,omitempty"`
 	Diagnostics      string                 `json:"diagnostics"`
+	InitialFiles     []workerResultFile     `json:"initial_files,omitempty"`
 	Drafts           []workerResultDraft    `json:"drafts"`
 	CandidateFiles   []workerResultFile     `json:"candidate_files,omitempty"`
 	CorrectedFiles   []workerResultFile     `json:"corrected_files,omitempty"`
@@ -160,6 +161,7 @@ func finalizeTrainingTrace(options traceFinalizeOptions) (trainingTrace, error) 
 		OriginalMessage:  result.Message,
 		OriginalIssues:   append([]string(nil), result.Issues...),
 		Diagnostics:      strings.TrimSpace(string(diagnosticsRaw)),
+		InitialFiles:     append([]workerResultFile(nil), result.InitialFiles...),
 		Drafts:           drafts,
 		CandidateFiles:   append([]workerResultFile(nil), result.Files...),
 		Activities:       append([]workspaceJobActivity(nil), result.Activities...),

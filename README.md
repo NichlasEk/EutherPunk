@@ -244,6 +244,8 @@ are modified. Result statuses are `completed`, `needs_review`, `no_change`,
 30 minutes.
 
 Worker JSON includes the complete bounded revision history under `drafts`.
+It also records the bounded pre-job workspace under `initial_files`, allowing
+verified tools to distinguish a real repair from a repeated final answer.
 After an external verifier has checked and, when necessary, corrected the
 workspace, the result can be converted into a private adapter-training trace:
 
@@ -282,6 +284,11 @@ accepted/rejected training trace. `summary.json` reports executable pass rate,
 protected-file preservation, harness completion and timing. It also records the
 suite SHA-256 and CLI version so later A/B runs remain attributable.
 
+Before starting the model, the evaluator runs the case verifier against the
+seed workspace. A seed that already passes is rejected as an invalid repair
+case. Its failing diagnostics and initial files are retained in the final trace,
+so a first-pass model success is still a genuine verified repair transition.
+
 If the executable verifier fails an otherwise completed proposal, the evaluator
 sends the bounded real diagnostics back to the existing server job, applies the
 new draft and verifies it again. This loop is limited to two rounds. The worker
@@ -305,10 +312,11 @@ eutherpunk dataset build \
   --output training/outputs/repair-dataset-pilot
 ```
 
-Only accepted traces with a differing earlier draft and concrete repair
-evidence are exported. Directly successful generations are intentionally
-excluded. The builder rejects symlinks and strong private-key/token/assigned
-secret patterns, removes duplicate transitions and writes private
+Only accepted traces with a differing verified initial state or earlier model
+draft and concrete repair evidence are exported. A direct model success is
+eligible only when the evaluator first proved that its seed failed. The builder
+rejects symlinks and strong private-key/token/assigned secret patterns, removes
+duplicate transitions and writes private
 `train.jsonl`, `holdout.jsonl` and `manifest.json` files.
 
 Small pilots with fewer than five examples remain entirely in `train.jsonl`;

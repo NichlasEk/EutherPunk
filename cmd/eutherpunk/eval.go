@@ -314,6 +314,19 @@ func executeEvalCase(
 			preserved[file.Path] = initial[file.Path]
 		}
 	}
+	seedOutput, seedErr := runEvalVerifier(workspaceRoot, test.Verifier)
+	seedDiagnostic := formatEvalDiagnosticRound(
+		-1,
+		test.Verifier,
+		seedOutput,
+		seedErr,
+		nil,
+	)
+	if seedErr == nil {
+		result.Error = "eval-startläget passerar redan verifieraren"
+		_ = writeProjectMemoryFileAtomic(diagnosticsPath, []byte(seedDiagnostic))
+		return result
+	}
 	_, _ = fmt.Fprintf(stderr, "eval %s: worker startar\n", test.ID)
 	var workerJSON bytes.Buffer
 	workerErr := runEvalWorker(
@@ -339,6 +352,7 @@ func executeEvalCase(
 
 	verifyOutput, verifierErr := runEvalVerifier(workspaceRoot, test.Verifier)
 	diagnosticRounds := []string{
+		seedDiagnostic,
 		formatEvalDiagnosticRound(0, test.Verifier, verifyOutput, verifierErr, workerErr),
 	}
 	for verifierErr != nil &&
@@ -527,7 +541,10 @@ func runEvalVerifier(root string, command []string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(root, ".eval-go-cache"))
+	cmd.Env = append(
+		os.Environ(),
+		"GOCACHE="+filepath.Join(filepath.Dir(root), ".eval-go-cache"),
+	)
 	var output limitedEvalBuffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -615,9 +632,13 @@ func formatEvalDiagnosticRound(
 	output string,
 	verifierErr, workerErr error,
 ) string {
+	label := fmt.Sprintf("verification round %d", round)
+	if round < 0 {
+		label = "seed verification"
+	}
 	return fmt.Sprintf(
-		"verification round %d:\n%s",
-		round,
+		"%s:\n%s",
+		label,
 		formatEvalDiagnostics(command, output, verifierErr, workerErr),
 	)
 }

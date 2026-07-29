@@ -293,7 +293,14 @@ func discoverDatasetTraces(inputs []string) ([]string, []string, error) {
 }
 
 func datasetExampleFromTrace(trace trainingTrace) (datasetExample, bool, error) {
-	source, ok := latestDifferingDraft(trace.Drafts, trace.CorrectedFiles)
+	drafts := append([]workerResultDraft(nil), trace.Drafts...)
+	if len(trace.InitialFiles) > 0 {
+		drafts = append(
+			[]workerResultDraft{{Revision: 0, Files: trace.InitialFiles}},
+			drafts...,
+		)
+	}
+	source, ok := latestDifferingDraft(drafts, trace.CorrectedFiles)
 	if !ok || !hasRepairEvidence(trace) {
 		return datasetExample{}, false, nil
 	}

@@ -99,6 +99,37 @@ func TestLatestDifferingDraftRejectsUnchangedTrace(t *testing.T) {
 	}
 }
 
+func TestDatasetUsesVerifiedFailingInitialFilesForDirectSuccess(t *testing.T) {
+	trace := trainingTrace{
+		SchemaVersion: trainingTraceSchemaVersion,
+		Verdict:       "accepted",
+		Task:          "repair Answer",
+		Diagnostics:   "seed verification: failed\nfinal verification: passed",
+		InitialFiles: []workerResultFile{{
+			Path:    "answer.go",
+			Content: "package answer\nfunc Answer() int { return 0 }\n",
+		}},
+		Drafts: []workerResultDraft{{
+			Revision: 1,
+			Files: []workerResultFile{{
+				Path:    "answer.go",
+				Content: "package answer\nfunc Answer() int { return 42 }\n",
+			}},
+		}},
+		CorrectedFiles: []workerResultFile{{
+			Path:    "answer.go",
+			Content: "package answer\nfunc Answer() int { return 42 }\n",
+		}},
+	}
+	example, usable, err := datasetExampleFromTrace(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usable || !strings.Contains(example.Messages[1].Content, "return 0") {
+		t.Fatalf("example = %#v, usable = %t", example, usable)
+	}
+}
+
 func datasetTestTrace(before, after string) trainingTrace {
 	return trainingTrace{
 		SchemaVersion:  trainingTraceSchemaVersion,

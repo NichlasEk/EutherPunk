@@ -210,3 +210,33 @@ The manifest deliberately retains:
 No adapter training should begin from this pilot. Continue collecting varied
 diagnosed repairs until there is a meaningful holdout and enough language/task
 diversity to measure generalization.
+
+## Verified initial-state provenance
+
+The worker result and trace now retain bounded `initial_files`. Eval cases run
+their declared verifier before the model starts and reject a seed that already
+passes. Go build cache is kept outside the model workspace; generated Rust
+`target/` state remains excluded by the existing workspace rules.
+
+This makes a first-pass model success usable without manufacturing a failure:
+
+```text
+verified failing initial files + failing diagnostics + task
+    -> externally verified corrected production files
+```
+
+A new v2 run produced six accepted initial-to-final transitions and one rejected
+slug attempt after both external repair rounds failed. Combining these with the
+older diagnosed traces yielded the second private pilot:
+
+- JSON artifacts inspected: 69;
+- accepted traces: 18;
+- usable repair transitions: 10;
+- duplicates: 0;
+- train examples: 7;
+- deterministic holdout examples: 3.
+
+The rejected slug trace remains useful negative/preference evidence but is not
+included in supervised targets. The corpus is now structurally trainable, but
+ten transitions still do not justify an adapter run; the next milestone remains
+at least 30 diverse repairs.

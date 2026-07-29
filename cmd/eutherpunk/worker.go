@@ -43,6 +43,7 @@ type workerResult struct {
 	Model              string                 `json:"model,omitempty"`
 	Message            string                 `json:"message,omitempty"`
 	CheckpointRevision int                    `json:"checkpoint_revision,omitempty"`
+	InitialFiles       []workerResultFile     `json:"initial_files,omitempty"`
 	Files              []workerResultFile     `json:"files,omitempty"`
 	Drafts             []workerResultDraft    `json:"drafts,omitempty"`
 	Issues             []string               `json:"issues,omitempty"`
@@ -104,6 +105,11 @@ func runWorker(cfg *cliConfig, args []string, stdout, stderr io.Writer) error {
 	cfg.workspace = workspace
 	cfg.nonInteractiveAuth = true
 
+	initialFiles, err := readWorkspaceFiles(workspace)
+	if err != nil {
+		return finish(fmt.Errorf("läs ursprunglig arbetsyta: %w", err))
+	}
+	result.InitialFiles = workerResultFiles(initialFiles)
 	if err := cfg.ensureAuthenticated(false); err != nil {
 		return finish(err)
 	}
