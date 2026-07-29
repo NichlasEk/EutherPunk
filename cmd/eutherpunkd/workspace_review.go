@@ -49,7 +49,10 @@ förlorad metadata, saknade kontroller och ofullständiga placeholders.
 För spel ska du särskilt kontrollera spelloop, input, kollisioner, rotation av
 alla former, låsning, poäng och game-over. Acceptera inte ett förslag med ett
 konkret funktionsfel. Undvik kosmetiskt tyckande. Svara endast med JSON enligt
-schemat. "issues" ska vara korta, konkreta och möjliga att reparera.`
+schemat. Sätt "accepted" till true och "issues" till en tom lista när kraven är
+uppfyllda. När "accepted" är false ska "issues" endast innehålla verkliga fel,
+aldrig beröm eller en beskrivning av sådant som fungerar. Felen ska vara korta,
+konkreta och möjliga att reparera.`
 	user := fmt.Sprintf(
 		"ANVÄNDARENS UPPGIFT:\n%s\n\nKANDIDAT:\n%s",
 		strings.TrimSpace(task),
@@ -87,8 +90,10 @@ schemat. "issues" ska vara korta, konkreta och möjliga att reparera.`
 		return workspaceQualityReview{}, fmt.Errorf("tolka kvalitetsgranskning: %w", err)
 	}
 	review.Issues = compactReviewIssues(review.Issues)
-	if review.Accepted && len(review.Issues) > 0 {
-		review.Accepted = false
+	if review.Accepted {
+		// The required boolean is authoritative. Some local models put a positive
+		// explanation in issues even after accepting a correct proposal.
+		review.Issues = nil
 	}
 	if !review.Accepted && len(review.Issues) == 0 {
 		review.Issues = []string{"Granskaren underkände förslaget utan en användbar diagnos."}

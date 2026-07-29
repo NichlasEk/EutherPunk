@@ -126,7 +126,7 @@ Interactive preview commands:
 ```text
 /permissions
 /permissions system off|ask|session
-/permissions files off|ask|session
+/permissions files off|ask|session|auto
 /workspace
 /workspace init <directory>
 /workspace use <directory>
@@ -155,13 +155,16 @@ privacy-filtered report to the selected model as chat context; hostname,
 username, and working directory are masked by default. `/system share full`
 shows the exact full report and requires an extra confirmation before sending
 those identifying fields. A `session` permission grant resets when the process
-exits.
+exits. `auto` is the default for workspace files: structured checkpoints are
+written automatically, but only inside the explicitly selected workspace. It
+does not grant shell or administrator access.
 
 ### Local coding workspace
 
 When `eutherpunk` starts in a project directory, it offers to initialize the
 current directory as the workspace for that session. Answering no keeps the CLI
-in chat-only mode.
+in chat-only mode. If `.eutherpunk` already exists, it instead offers to resume
+the known workspace and defaults to yes.
 When `luac` or Node.js is installed, proposed Lua, JavaScript, and inline HTML
 scripts are syntax-checked before the approval prompt; invalid proposals are
 rejected without writing anything.
@@ -169,16 +172,27 @@ rejected without writing anything.
 `/workspace init <directory>` creates and selects a new project directory;
 `/workspace use <directory>` selects an existing one. The home directory and
 filesystem root cannot be selected as a workspace. EutherPunk may snapshot at
-most 32 UTF-8 text files (48 KiB total) after an `ask` or `session` approval.
+most 32 UTF-8 text files (48 KiB total) after an `ask`, `session`, or `auto`
+grant.
 It does not follow symlinks and skips `.git`, dependency/build directories,
 binary files, `.env`, credentials, private keys and other likely secret files.
 
-The model can propose complete file contents using a strictly parsed local
-protocol. The CLI validates every relative path, shows a preview, and asks
-again before writing. Writes are atomic and an overwritten file is preserved
-as `<name>.eutherpunk.previous`. Deletion and arbitrary shell execution are not
-available in this version. This is enough to create and revise small projects;
-the user still runs or builds them separately.
+The model proposes complete file contents using a strictly parsed local
+protocol. The CLI validates every relative path. In `ask` mode it shows a
+preview and asks before writing; in `session` mode approved files are written
+for the rest of that process; in `auto` mode validated draft checkpoints are
+written immediately so later validation and repair passes iterate on real
+files. Writes are atomic and the original overwritten file is preserved as
+`<name>.eutherpunk.previous`. Deletion and arbitrary shell execution are not
+available in this version. The user still runs or builds projects separately.
+
+In `auto` mode the harness maintains durable project memory under
+`.eutherpunk/`: `project.md` holds the long-lived goal and rules, `state.json`
+records the latest task, model, checkpoint, files and validation state, and
+`journal.jsonl` keeps a bounded event history. This context is read before
+source files on every workspace request, including after restarting the CLI.
+The directory is harness-owned: model proposals cannot overwrite it, symlinks
+are rejected, files are private, and status updates are atomic.
 
 Workspace generation uses an authenticated asynchronous job protocol. Starting
 a job returns the `du>` prompt immediately so normal conversation can continue

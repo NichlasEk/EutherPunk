@@ -117,6 +117,9 @@ func TestAutoProposalWritesWithoutConfirmation(t *testing.T) {
 
 func TestWorkspaceDraftRevisionsPreserveOriginalBackup(t *testing.T) {
 	root := t.TempDir()
+	if err := ensureProjectMemory(workspaceState{Root: root}, "repair"); err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(root, "main.lua")
 	if err := os.WriteFile(target, []byte("original\n"), 0o600); err != nil {
 		t.Fatal(err)

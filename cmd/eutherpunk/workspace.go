@@ -94,15 +94,40 @@ func offerCurrentDirectoryWorkspace(reader *bufio.Reader, state *workspaceState)
 	}
 
 	fmt.Println("Current directory:", current)
-	fmt.Print("Would you like to initialize this directory as an EutherPunk workspace? [y/N]: ")
+	resume := false
+	memoryInfo, memoryErr := os.Lstat(filepath.Join(current, projectMemoryDirName))
+	switch {
+	case memoryErr == nil:
+		if memoryInfo.Mode()&os.ModeSymlink != 0 || !memoryInfo.IsDir() {
+			return fmt.Errorf("osäker projektminneskatalog i %s", current)
+		}
+		resume = true
+	case !errors.Is(memoryErr, os.ErrNotExist):
+		return memoryErr
+	}
+	if resume {
+		fmt.Print("EutherPunk project memory found. Resume this workspace? [Y/n]: ")
+	} else {
+		fmt.Print("Would you like to initialize this directory as an EutherPunk workspace? [y/N]: ")
+	}
 	answer, err := reader.ReadString('\n')
 	if err != nil {
 		return err
 	}
+	accepted := false
 	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "":
+		accepted = resume
 	case "y", "yes":
+		accepted = true
+	}
+	if accepted {
 		state.Root = filepath.Clean(current)
-		fmt.Println("Workspace initialized for this session.")
+		if resume {
+			fmt.Println("Workspace resumed with durable project memory.")
+		} else {
+			fmt.Println("Workspace initialized for this session.")
+		}
 		fmt.Println("EutherPunk cannot access files outside this directory.")
 		fmt.Println()
 	}
@@ -190,6 +215,12 @@ func beginBackgroundWorkspaceJob(
 	permissions *sessionPermissions,
 	output io.Writer,
 ) (pendingWorkspaceJob, bool, error) {
+	task := lastWorkspaceUserMessage(messages)
+	if permissions.files == permissionAuto {
+		if err := ensureProjectMemory(cfg.workspace, task); err != nil {
+			return pendingWorkspaceJob{}, false, err
+		}
+	}
 	toolContext, allowed, err := approvedWorkspaceContext(reader, cfg.workspace, permissions)
 	if err != nil || !allowed {
 		return pendingWorkspaceJob{}, false, err
@@ -203,6 +234,12 @@ func beginBackgroundWorkspaceJob(
 	}
 	if job.ID == "" {
 		return pendingWorkspaceJob{}, false, errors.New("servern returnerade inget jobb-ID")
+	}
+	if permissions.files == permissionAuto {
+		if err := recordProjectJobStarted(cfg.workspace, task, job); err != nil {
+			cancelWorkspaceJob(cfg, job.ID)
+			return pendingWorkspaceJob{}, false, err
+		}
 	}
 	printWorkspaceJobStarted(output, job)
 	_, _ = io.WriteString(
@@ -310,6 +347,7 @@ func waitAndReviewPendingWorkspaceJob(
 				output,
 				&pending.LastActivity,
 				func(job workspaceJobResponse) error {
+					pending.Job = job
 					if permissions.files != permissionAuto {
 						return nil
 					}
@@ -347,6 +385,14 @@ func waitAndReviewPendingWorkspaceJob(
 		return waitErr
 	}()
 	if err != nil {
+		if permissions.files == permissionAuto {
+			_ = recordProjectJobFinished(
+				cfg.workspace,
+				pending.Job,
+				"failed",
+				err.Error(),
+			)
+		}
 		if errors.Is(err, errAgentInterrupted) {
 			_, _ = io.WriteString(output, "\nBevakningen avbröts. Serverjobbet har också avbrutits.\n")
 			*pending = pendingWorkspaceJob{}
@@ -355,6 +401,28 @@ func waitAndReviewPendingWorkspaceJob(
 		return err
 	}
 	_, err = reviewWorkspaceResult(reader, cfg.workspace, permissions, output, message, proposal)
+	if permissions.files == permissionAuto {
+		status := "accepted"
+		if err != nil {
+			status = "failed"
+		} else if len(pending.Job.Files) == 0 && pending.Job.DraftRev > 0 {
+			status = "needs_repair"
+		} else if len(pending.Job.Files) == 0 {
+			status = "no_change"
+		}
+		summary := message
+		if err != nil {
+			summary = err.Error()
+		}
+		if memoryErr := recordProjectJobFinished(
+			cfg.workspace,
+			pending.Job,
+			status,
+			summary,
+		); memoryErr != nil && err == nil {
+			err = fmt.Errorf("uppdatera projektminne: %w", memoryErr)
+		}
+	}
 	*pending = pendingWorkspaceJob{}
 	return err
 }
@@ -457,7 +525,7 @@ func waitWorkspaceJob(
 	pollImmediately := true
 	for {
 		printWorkspaceJobActivities(output, job, lastActivity)
-		if onDraft != nil && job.DraftRev > 0 {
+		if onDraft != nil {
 			if err := onDraft(job); err != nil {
 				cancelWorkspaceJob(cfg, job.ID)
 				return "", fileProposal{}, fmt.Errorf("skriva arbetskopierevision: %w", err)
@@ -846,7 +914,15 @@ func workspaceContext(workspace workspaceState) (string, error) {
 	out.WriteString("LOKAL KODARBETSYTA\n")
 	out.WriteString("Du får läsa följande snapshot, men du har ingen direkt fil- eller shellåtkomst.\n")
 	out.WriteString("Servern har en separat strukturerad filkanal. Lägg aldrig filinnehåll eller kodblock i chattsvaret.\n")
-	out.WriteString("Använd endast relativa sökvägar. Ta aldrig med hemligheter. Ett lokalt godkännande krävs innan något skrivs.\n\n")
+	out.WriteString("Använd endast relativa sökvägar. Ta aldrig med hemligheter. CLI:t avgör lokalt om filer får skrivas enligt vald behörighet.\n\n")
+	projectMemory, err := projectMemoryContext(workspace)
+	if err != nil {
+		return "", err
+	}
+	if projectMemory != "" {
+		out.WriteString(projectMemory)
+		out.WriteByte('\n')
+	}
 	out.WriteString("Arbetsyta: ")
 	out.WriteString(filepath.Base(workspace.Root))
 	out.WriteString("\n")
@@ -926,7 +1002,7 @@ func readWorkspaceFiles(workspace workspaceState) ([]workspaceFile, error) {
 
 func shouldSkipWorkspaceDir(name string) bool {
 	switch strings.ToLower(name) {
-	case ".git", ".hg", ".svn", "node_modules", "target", "dist", "build", ".cache":
+	case ".git", ".hg", ".svn", ".eutherpunk", "node_modules", "target", "dist", "build", ".cache":
 		return true
 	}
 	return false
@@ -988,7 +1064,7 @@ func validateProposedFile(file workspaceFile) error {
 		return fmt.Errorf("otillåten filsökväg %q", file.Path)
 	}
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".git" || shouldSkipWorkspaceFile(part) {
+		if part == ".git" || part == projectMemoryDirName || shouldSkipWorkspaceFile(part) {
 			return fmt.Errorf("skyddad filsökväg %q", file.Path)
 		}
 	}
@@ -1027,6 +1103,9 @@ func applyWorkspaceDraft(
 			return err
 		}
 	}
+	if err := recordProjectCheckpoint(workspace, revision, files); err != nil {
+		return err
+	}
 	_, _ = fmt.Fprintf(
 		output,
 		"CHECKPOINT %d: skrev %d arbetskopia/-or i %s; kontroller och reparation fortsätter.\r\n",
@@ -1035,6 +1114,15 @@ func applyWorkspaceDraft(
 		root,
 	)
 	return nil
+}
+
+func lastWorkspaceUserMessage(messages []chatMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return strings.TrimSpace(messages[i].Content)
+		}
+	}
+	return ""
 }
 
 func approveAndApplyProposal(

@@ -23,7 +23,7 @@ Spara aldrig lösenord, tokens, privata nycklar eller andra hemligheter här.
 
 ## Arbetssätt
 
-- Föreslå inga ändringar utan att fråga först.
+- Följ den valda filbehörigheten. I AUTO-läge får godkända arbetsytefiler skrivas automatiskt.
 
 ## Projekt
 
