@@ -213,17 +213,24 @@ func runWorkspaceJob(
 func qualityReviewWorkspaceProposal(
 	ctx context.Context,
 	cfg serverConfig,
-	model, task, message string,
+	workerModel, task, message string,
 	files []workspaceResponseFile,
 	progress func(string),
 	publishDraft func([]workspaceResponseFile),
 ) (string, []workspaceResponseFile, error) {
+	reviewerModel := strings.TrimSpace(cfg.reviewModel)
+	if reviewerModel == "" {
+		reviewerModel = strings.TrimSpace(cfg.model)
+	}
+	if reviewerModel == "" {
+		reviewerModel = workerModel
+	}
 	for round := 0; round <= maxWorkspaceRepairRounds; round++ {
 		progress(fmt.Sprintf("Kvalitetsgranskning %d kontrollerar logik och krav.", round+1))
 		review, err := reviewWorkspaceProposalOllama(
 			ctx,
 			cfg.ollamaURL,
-			model,
+			reviewerModel,
 			task,
 			message,
 			files,
@@ -246,7 +253,7 @@ func qualityReviewWorkspaceProposal(
 		message, files, err = repairWorkspaceProposalOllama(
 			ctx,
 			cfg.ollamaURL,
-			model,
+			workerModel,
 			task,
 			message,
 			files,

@@ -36,6 +36,7 @@ type AgentConfig struct {
 	OllamaURL      string `json:"ollama_url"`
 	Model          string `json:"model"`
 	WorkspaceModel string `json:"workspace_model"`
+	ReviewModel    string `json:"review_model"`
 	VisionModel    string `json:"vision_model"`
 	SafeMode       bool   `json:"safe_mode"`
 }
@@ -258,6 +259,8 @@ func (cfg *Config) set(section, key, raw string) error {
 			cfg.Agent.Model = mustString(raw)
 		case "workspace_model":
 			cfg.Agent.WorkspaceModel = mustString(raw)
+		case "review_model":
+			cfg.Agent.ReviewModel = mustString(raw)
 		case "vision_model":
 			cfg.Agent.VisionModel = mustString(raw)
 		case "safe_mode":

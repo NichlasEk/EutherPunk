@@ -18,6 +18,7 @@ listen = ":9999"
 ollama_url = "http://127.0.0.1:11434"
 model = "qwen3-coder:30b"
 workspace_model = "devstral-small-2:24b"
+review_model = "qwen3-coder:30b"
 safe_mode = true
 
 [eutheroxide]
@@ -53,6 +54,9 @@ safe_mode = false
 	}
 	if cfg.Agent.WorkspaceModel != "devstral-small-2:24b" {
 		t.Fatalf("WorkspaceModel = %q", cfg.Agent.WorkspaceModel)
+	}
+	if cfg.Agent.ReviewModel != "qwen3-coder:30b" {
+		t.Fatalf("ReviewModel = %q", cfg.Agent.ReviewModel)
 	}
 	if user.SafeMode == nil {
 		t.Fatal("SafeMode was nil")

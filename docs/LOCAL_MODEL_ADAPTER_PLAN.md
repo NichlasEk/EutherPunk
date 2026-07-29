@@ -384,3 +384,39 @@ The pilot is therefore retained but is not the default model. The next
 acceptance gate is reviewer calibration: preserve the 6/6 holdout executable
 result while recovering 6/6 worker completion. Private datasets, adapters,
 GGUF files and evaluation outputs remain ignored and must not be uploaded.
+
+## Independent reviewer calibration
+
+The coding and review roles are now independently configurable:
+
+```toml
+[agent]
+workspace_model = "eutherpunk-devstral-repair:pilot-m3"
+review_model = "qwen3-coder:30b"
+```
+
+The workspace model still plans, writes and repairs files. The review model
+only evaluates the candidate against the explicit task. Repairs remain assigned
+to the workspace model. `review_model` defaults to the ordinary server model,
+so existing configurations remain valid.
+
+This separation was tested on all six true holdout cases:
+
+| Metric | Self-review | Independent Qwen review |
+| --- | ---: | ---: |
+| Executable verifier | 6/6 | 6/6 |
+| Protected-file preservation | 6/6 | 6/6 |
+| Worker completion | 5/6 | 6/6 |
+| Mean duration | 15.66 s | 41.12 s |
+
+The previously withheld JavaScript range candidate became `completed` without
+changing its correct code. Four additional v3 cases that self-review had left
+in `needs_review` were also run as targeted regressions; all four completed,
+passed their executable verifier and preserved protected files. Together with
+the holdout set, the ten targeted independent-review runs reached 10/10 on all
+three acceptance measures.
+
+The latency increase comes from switching between two large models on one
+24 GB GPU. The independent reviewer is therefore accepted as the quality
+configuration but the adapter remains opt-in until that latency tradeoff is
+chosen deliberately or a smaller reviewer passes the same frozen tests.

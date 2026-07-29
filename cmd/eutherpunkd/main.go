@@ -61,6 +61,7 @@ type serverConfig struct {
 	ollamaURL            string
 	model                string
 	workspaceModel       string
+	reviewModel          string
 	visionModel          string
 	configPath           string
 	chatDir              string
@@ -343,11 +344,16 @@ func main() {
 	if workspaceModel == "" {
 		workspaceModel = appConfig.Agent.Model
 	}
+	reviewModel := strings.TrimSpace(appConfig.Agent.ReviewModel)
+	if reviewModel == "" {
+		reviewModel = appConfig.Agent.Model
+	}
 	cfg := serverConfig{
 		addr:                 envOr("EUTHERPUNK_ADDR", appConfig.Agent.Listen),
 		ollamaURL:            strings.TrimRight(envOr("OLLAMA_URL", appConfig.Agent.OllamaURL), "/"),
 		model:                envOr("EUTHERPUNK_MODEL", appConfig.Agent.Model),
 		workspaceModel:       envOr("EUTHERPUNK_WORKSPACE_MODEL", workspaceModel),
+		reviewModel:          envOr("EUTHERPUNK_REVIEW_MODEL", reviewModel),
 		visionModel:          envOr("EUTHERPUNK_VISION_MODEL", appConfig.Agent.VisionModel),
 		configPath:           appConfig.Path,
 		chatDir:              envOr("EUTHERPUNK_CHAT_DIR", defaultChatDirectory(appConfig.Image)),
@@ -409,11 +415,12 @@ func main() {
 	mux.HandleFunc("GET /downloads/eutherpunk-cli/{platform}", handleCLIDownload(cfg))
 
 	log.Printf(
-		"eutherpunkd listening on %s, ollama=%s, model=%s, workspace_model=%s, vision_model=%s",
+		"eutherpunkd listening on %s, ollama=%s, model=%s, workspace_model=%s, review_model=%s, vision_model=%s",
 		cfg.addr,
 		cfg.ollamaURL,
 		cfg.model,
 		workspaceModelForConfig(cfg),
+		cfg.reviewModel,
 		cfg.visionModel,
 	)
 	if err := http.ListenAndServe(cfg.addr, logRequests(mux)); err != nil {
@@ -428,6 +435,7 @@ func handleStatus(cfg serverConfig) http.HandlerFunc {
 			"service":         "eutherpunk",
 			"model":           cfg.model,
 			"workspace_model": workspaceModelForConfig(cfg),
+			"review_model":    cfg.reviewModel,
 			"vision_model":    cfg.visionModel,
 			"auth_required":   cfg.authRequired,
 		})

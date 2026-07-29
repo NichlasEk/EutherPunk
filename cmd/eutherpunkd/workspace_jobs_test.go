@@ -19,8 +19,12 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.Model != "coder-model" {
-			t.Fatalf("workspace model = %q", request.Model)
+		expectedModel := "coder-model"
+		if workspaceRequestHasProperty(request, "accepted") {
+			expectedModel = "reviewer-model"
+		}
+		if request.Model != expectedModel {
+			t.Fatalf("request model = %q, want %q", request.Model, expectedModel)
 		}
 		if workspaceRequestHasProperty(request, "accepted") {
 			_ = json.NewEncoder(w).Encode(ollamaChatResponse{
@@ -62,6 +66,7 @@ func TestWorkspaceJobReturnsImmediatelyAndCompletes(t *testing.T) {
 		ollamaURL:      ollama.URL,
 		model:          "chat-model",
 		workspaceModel: "coder-model",
+		reviewModel:    "reviewer-model",
 		visionModel:    "vision-model",
 		settingsDir:    t.TempDir(),
 		promptsPath:    t.TempDir() + "/prompts.toml",
