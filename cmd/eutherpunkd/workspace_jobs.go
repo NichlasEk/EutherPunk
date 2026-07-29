@@ -24,6 +24,9 @@ type workspaceJob struct {
 	Message    string                  `json:"message,omitempty"`
 	Activities []workspaceJobActivity  `json:"activities,omitempty"`
 	Files      []workspaceResponseFile `json:"files,omitempty"`
+	DraftFiles []workspaceResponseFile `json:"draft_files,omitempty"`
+	DraftRev   int                     `json:"draft_revision,omitempty"`
+	Drafts     []workspaceJobDraft     `json:"drafts,omitempty"`
 	Error      string                  `json:"error,omitempty"`
 	CreatedAt  time.Time               `json:"created_at"`
 	UpdatedAt  time.Time               `json:"updated_at"`
@@ -38,6 +41,11 @@ type workspaceJobActivity struct {
 	Sequence int       `json:"sequence"`
 	Message  string    `json:"message"`
 	At       time.Time `json:"at"`
+}
+
+type workspaceJobDraft struct {
+	Revision int                     `json:"revision"`
+	Files    []workspaceResponseFile `json:"files"`
 }
 
 var (
@@ -165,8 +173,12 @@ func runWorkspaceJob(
 		progress,
 	)
 	if err == nil && len(files) > 0 {
+		publishWorkspaceDraft(jobID, files)
 		message, files, err = qualityReviewWorkspaceProposal(
 			ctx, cfg, model, task, message, files, progress,
+			func(files []workspaceResponseFile) {
+				publishWorkspaceDraft(jobID, files)
+			},
 		)
 	}
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
@@ -204,6 +216,7 @@ func qualityReviewWorkspaceProposal(
 	model, task, message string,
 	files []workspaceResponseFile,
 	progress func(string),
+	publishDraft func([]workspaceResponseFile),
 ) (string, []workspaceResponseFile, error) {
 	for round := 0; round <= maxWorkspaceRepairRounds; round++ {
 		progress(fmt.Sprintf("Kvalitetsgranskning %d kontrollerar logik och krav.", round+1))
@@ -227,7 +240,7 @@ func qualityReviewWorkspaceProposal(
 		}
 		if round == maxWorkspaceRepairRounds {
 			progress("Förslaget stoppades efter två misslyckade reparationsvarv.")
-			return "Förslaget klarade inte den automatiska kvalitetsgranskningen efter två reparationsvarv. Inga filer föreslås eller ändras.", nil, nil
+			return "Slutförslaget klarade inte kvalitetsgranskningen efter två reparationsvarv. I AUTO-läge behålls den sista arbetskopian för fortsatt arbete.", nil, nil
 		}
 		progress(fmt.Sprintf("Reparationsvarv %d startar.", round+1))
 		message, files, err = repairWorkspaceProposalOllama(
@@ -243,8 +256,29 @@ func qualityReviewWorkspaceProposal(
 		if err != nil {
 			return "", nil, err
 		}
+		if publishDraft != nil && len(files) > 0 {
+			publishDraft(files)
+		}
 	}
 	return message, files, nil
+}
+
+func publishWorkspaceDraft(jobID string, files []workspaceResponseFile) {
+	updateWorkspaceJob(jobID, func(job *workspaceJob) {
+		if job.Status != "running" || len(files) == 0 {
+			return
+		}
+		job.DraftRev++
+		job.DraftFiles = append([]workspaceResponseFile(nil), files...)
+		job.Drafts = append(job.Drafts, workspaceJobDraft{
+			Revision: job.DraftRev,
+			Files:    append([]workspaceResponseFile(nil), files...),
+		})
+		appendWorkspaceJobActivityLocked(
+			job,
+			fmt.Sprintf("Arbetskopierevision %d är klar för lokal skrivning.", job.DraftRev),
+		)
+	})
 }
 
 type workspaceRepairRequest struct {
@@ -333,8 +367,12 @@ func runWorkspaceJobLocalRepair(
 		progress,
 	)
 	if err == nil && len(files) > 0 {
+		publishWorkspaceDraft(jobID, files)
 		message, files, err = qualityReviewWorkspaceProposal(
 			ctx, cfg, model, task, message, files, progress,
+			func(files []workspaceResponseFile) {
+				publishWorkspaceDraft(jobID, files)
+			},
 		)
 	}
 	updateWorkspaceJob(jobID, func(job *workspaceJob) {
@@ -454,6 +492,14 @@ func workspaceJobViewLocked(job *workspaceJob) workspaceJob {
 	view.task = ""
 	view.cancel = nil
 	view.Files = append([]workspaceResponseFile(nil), job.Files...)
+	view.DraftFiles = append([]workspaceResponseFile(nil), job.DraftFiles...)
+	view.Drafts = make([]workspaceJobDraft, len(job.Drafts))
+	for i, draft := range job.Drafts {
+		view.Drafts[i] = workspaceJobDraft{
+			Revision: draft.Revision,
+			Files:    append([]workspaceResponseFile(nil), draft.Files...),
+		}
+	}
 	view.Activities = append([]workspaceJobActivity(nil), job.Activities...)
 	return view
 }

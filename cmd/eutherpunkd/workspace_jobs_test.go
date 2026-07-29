@@ -241,6 +241,15 @@ func TestWorkspaceJobRepairsRejectedProposal(t *testing.T) {
 			if len(job.Files) != 1 || !strings.Contains(job.Files[0].Content, "fungerar") {
 				t.Fatalf("repaired files = %#v", job.Files)
 			}
+			if job.DraftRev != 2 || len(job.DraftFiles) != 1 ||
+				!strings.Contains(job.DraftFiles[0].Content, "fungerar") {
+				t.Fatalf("draft revision=%d files=%#v", job.DraftRev, job.DraftFiles)
+			}
+			if len(job.Drafts) != 2 ||
+				!strings.Contains(job.Drafts[0].Files[0].Content, "trasig") ||
+				!strings.Contains(job.Drafts[1].Files[0].Content, "fungerar") {
+				t.Fatalf("draft history = %#v", job.Drafts)
+			}
 			break
 		}
 		if job.Status == "failed" || time.Now().After(deadline) {

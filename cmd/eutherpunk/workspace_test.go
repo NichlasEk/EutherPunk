@@ -115,6 +115,62 @@ func TestAutoProposalWritesWithoutConfirmation(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDraftRevisionsPreserveOriginalBackup(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "main.lua")
+	if err := os.WriteFile(target, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backedUp := map[string]bool{}
+	var output strings.Builder
+	for revision, content := range []string{"print('broken')\n", "print('repaired')\n"} {
+		err := applyWorkspaceDraft(
+			workspaceState{Root: root},
+			[]workspaceFile{{Path: "main.lua", Content: content}},
+			revision+1,
+			backedUp,
+			&output,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "print('repaired')\n" {
+		t.Fatalf("draft = %q", raw)
+	}
+	backup, err := os.ReadFile(target + ".eutherpunk.previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != "original\n" {
+		t.Fatalf("backup = %q", backup)
+	}
+	permissions := sessionPermissions{files: permissionAuto}
+	applied, err := approveAndApplyProposal(
+		bufio.NewReader(strings.NewReader("")),
+		workspaceState{Root: root},
+		&permissions,
+		fileProposal{Files: []workspaceFile{{Path: "main.lua", Content: "print('repaired')\n"}}},
+	)
+	if err != nil || !applied {
+		t.Fatalf("applied=%v err=%v", applied, err)
+	}
+	backup, err = os.ReadFile(target + ".eutherpunk.previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != "original\n" {
+		t.Fatalf("final apply replaced original backup: %q", backup)
+	}
+	if !strings.Contains(output.String(), "CHECKPOINT 2") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
 func TestWorkspaceWriteRejectsSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

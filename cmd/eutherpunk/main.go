@@ -74,6 +74,11 @@ func main() {
 	memory, memoryErr := loadMemoryState(appConfig.Path)
 	settingsDefaults := defaultCLISettings(appConfig.Path, baseAPIURL, baseModel, memory.Enabled)
 	settings, settingsErr := loadCLISettings(settingsDefaults)
+	if settingsErr == nil && !settings.Exists {
+		if err := settings.Save(); err != nil {
+			settingsErr = fmt.Errorf("skapa settings.toml: %w", err)
+		}
+	}
 	if settingsErr != nil {
 		settings = settingsDefaults
 	}
@@ -175,7 +180,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 
 	fmt.Printf("EutherPunk %s\n", version)
 	fmt.Println("Försiktig förhandsversion: chatt, systeminformation och avgränsade kodarbetsytor.")
-	if cfg.settings.Exists && cfg.settings.Files == permissionAuto {
+	if cfg.settings.Files == permissionAuto {
 		fmt.Println("Arbetsytefiler: AUTO — godkänd kod skrivs automatiskt, endast i vald arbetsyta.")
 	} else {
 		fmt.Println("CLI:t kan bara läsa vald arbetsyta och frågar alltid innan filer ändras.")

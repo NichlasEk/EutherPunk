@@ -55,7 +55,7 @@ func defaultCLISettings(configPath, apiURL, model string, memoryEnabled bool) cl
 		Language:       "sv",
 		Mode:           "chat",
 		SystemInfo:     permissionAsk,
-		Files:          permissionAsk,
+		Files:          permissionAuto,
 		MemoryEnabled:  memoryEnabled,
 		MemoryFile:     "memory.md",
 		MemoryMaxBytes: maxMemoryBytes,

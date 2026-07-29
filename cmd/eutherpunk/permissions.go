@@ -21,7 +21,7 @@ type sessionPermissions struct {
 }
 
 func defaultSessionPermissions() sessionPermissions {
-	return sessionPermissions{systemInfo: permissionAsk, files: permissionAsk}
+	return sessionPermissions{systemInfo: permissionAsk, files: permissionAuto}
 }
 
 func handlePermissionsCommand(permissions *sessionPermissions, command string) {

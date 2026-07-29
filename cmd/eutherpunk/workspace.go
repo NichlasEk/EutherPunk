@@ -50,6 +50,9 @@ type workspaceJobResponse struct {
 	Message    string                 `json:"message,omitempty"`
 	Activities []workspaceJobActivity `json:"activities,omitempty"`
 	Files      []workspaceFile        `json:"files,omitempty"`
+	DraftFiles []workspaceFile        `json:"draft_files,omitempty"`
+	DraftRev   int                    `json:"draft_revision,omitempty"`
+	Drafts     []workspaceJobDraft    `json:"drafts,omitempty"`
 	Error      string                 `json:"error,omitempty"`
 }
 
@@ -58,9 +61,16 @@ type workspaceJobActivity struct {
 	Message  string `json:"message"`
 }
 
+type workspaceJobDraft struct {
+	Revision int             `json:"revision"`
+	Files    []workspaceFile `json:"files"`
+}
+
 type pendingWorkspaceJob struct {
-	Job          workspaceJobResponse
-	LastActivity int
+	Job                workspaceJobResponse
+	LastActivity       int
+	LastDraftRevision  int
+	DraftBackedUpPaths map[string]bool
 }
 
 func offerCurrentDirectoryWorkspace(reader *bufio.Reader, state *workspaceState) error {
@@ -299,6 +309,37 @@ func waitAndReviewPendingWorkspaceJob(
 				pending.Job,
 				output,
 				&pending.LastActivity,
+				func(job workspaceJobResponse) error {
+					if permissions.files != permissionAuto {
+						return nil
+					}
+					if pending.DraftBackedUpPaths == nil {
+						pending.DraftBackedUpPaths = map[string]bool{}
+					}
+					drafts := job.Drafts
+					if len(drafts) == 0 && job.DraftRev > 0 {
+						drafts = []workspaceJobDraft{{
+							Revision: job.DraftRev,
+							Files:    job.DraftFiles,
+						}}
+					}
+					for _, draft := range drafts {
+						if draft.Revision <= pending.LastDraftRevision {
+							continue
+						}
+						if err := applyWorkspaceDraft(
+							cfg.workspace,
+							draft.Files,
+							draft.Revision,
+							pending.DraftBackedUpPaths,
+							output,
+						); err != nil {
+							return err
+						}
+						pending.LastDraftRevision = draft.Revision
+					}
+					return nil
+				},
 			)
 			return message, innerErr
 		})
@@ -351,7 +392,7 @@ func requestWorkspaceAnswer(
 	}
 	printWorkspaceJobStarted(output, job)
 	lastActivity := 1
-	return waitWorkspaceJob(ctx, cfg, job, output, &lastActivity)
+	return waitWorkspaceJob(ctx, cfg, job, output, &lastActivity, nil)
 }
 
 func workspaceJobRequestBody(
@@ -409,12 +450,19 @@ func waitWorkspaceJob(
 	job workspaceJobResponse,
 	output io.Writer,
 	lastActivity *int,
+	onDraft func(workspaceJobResponse) error,
 ) (string, fileProposal, error) {
 	started := time.Now()
 	nextProgress := 10 * time.Second
 	pollImmediately := true
 	for {
 		printWorkspaceJobActivities(output, job, lastActivity)
+		if onDraft != nil && job.DraftRev > 0 {
+			if err := onDraft(job); err != nil {
+				cancelWorkspaceJob(cfg, job.ID)
+				return "", fileProposal{}, fmt.Errorf("skriva arbetskopierevision: %w", err)
+			}
+		}
 		switch job.Status {
 		case "completed":
 			totalBytes := 0
@@ -433,7 +481,15 @@ func waitWorkspaceJob(
 				return "", fileProposal{}, err
 			}
 			if len(proposal.Files) == 0 {
-				_, _ = io.WriteString(output, "Kodjobbet avslutades utan filförslag.\r\n")
+				if job.DraftRev > 0 {
+					_, _ = fmt.Fprintf(
+						output,
+						"Slutkontrollen underkände förslaget; CHECKPOINT %d ligger kvar som arbetskopia.\r\n",
+						job.DraftRev,
+					)
+				} else {
+					_, _ = io.WriteString(output, "Kodjobbet avslutades utan filförslag.\r\n")
+				}
 				return message, proposal, nil
 			}
 			if validationErr := validateProposalSyntax(proposal); validationErr != nil {
@@ -942,6 +998,45 @@ func validateProposedFile(file workspaceFile) error {
 	return nil
 }
 
+func applyWorkspaceDraft(
+	workspace workspaceState,
+	files []workspaceFile,
+	revision int,
+	backedUp map[string]bool,
+	output io.Writer,
+) error {
+	if len(files) == 0 {
+		return nil
+	}
+	root, err := canonicalWorkspaceRoot(workspace)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := validateProposedFile(file); err != nil {
+			return err
+		}
+		path := filepath.ToSlash(file.Path)
+		if !backedUp[path] {
+			if err := backupWorkspaceFile(root, file.Path); err != nil {
+				return err
+			}
+			backedUp[path] = true
+		}
+		if err := writeWorkspaceFile(root, file); err != nil {
+			return err
+		}
+	}
+	_, _ = fmt.Fprintf(
+		output,
+		"CHECKPOINT %d: skrev %d arbetskopia/-or i %s; kontroller och reparation fortsätter.\r\n",
+		revision,
+		len(files),
+		root,
+	)
+	return nil
+}
+
 func approveAndApplyProposal(
 	reader *bufio.Reader,
 	workspace workspaceState,
@@ -1001,6 +1096,21 @@ func approveAndApplyProposal(
 		fmt.Println("AUTO-läge: skriver det godkända förslaget i den valda arbetsytan.")
 	}
 	for _, file := range proposal.Files {
+		if permissions.files == permissionAuto {
+			target, exists, targetErr := safeWorkspaceTarget(root, file.Path)
+			if targetErr != nil {
+				return false, targetErr
+			}
+			if exists {
+				current, readErr := os.ReadFile(target)
+				if readErr != nil {
+					return false, readErr
+				}
+				if string(current) == file.Content {
+					continue
+				}
+			}
+		}
 		if err := backupWorkspaceFile(root, file.Path); err != nil {
 			return false, err
 		}
