@@ -380,10 +380,10 @@ completion declined from 16/20 to 15/20. Because most v3 cases contributed
 training transitions, that full-suite number is a regression check rather than
 generalization evidence.
 
-The pilot is therefore retained but is not the default model. The next
-acceptance gate is reviewer calibration: preserve the 6/6 holdout executable
-result while recovering 6/6 worker completion. Private datasets, adapters,
-GGUF files and evaluation outputs remain ignored and must not be uploaded.
+The pilot was initially retained as an opt-in model. The next acceptance gate
+was reviewer calibration: preserve the 6/6 holdout executable result while
+recovering 6/6 worker completion. Private datasets, adapters, GGUF files and
+evaluation outputs remain ignored and must not be uploaded.
 
 ## Independent reviewer calibration
 
@@ -418,8 +418,9 @@ three acceptance measures.
 
 The latency increase comes from switching between two large models on one
 24 GB GPU. The independent reviewer is therefore accepted as the quality
-configuration but the adapter remains opt-in until that latency tradeoff is
-chosen deliberately or a smaller reviewer passes the same frozen tests.
+configuration. On 2026-07-29 the adapter was promoted from opt-in to the live
+default workspace model after that latency tradeoff was deliberately accepted.
+The unmodified `devstral-small-2:24b` model remains available for rollback.
 
 ## Verifier-driven creative recovery
 
