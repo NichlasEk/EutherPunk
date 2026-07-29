@@ -195,7 +195,7 @@ func (auth *authService) handleAuthorizeGet() http.HandlerFunc {
 		body := fmt.Sprintf(`
 <p>Inloggad som <strong>%s</strong> med EutherID.</p>
 <p>Vill du tillåta <strong>%s</strong> att använda EutherPunk-chatten?</p>
-<p class="scope">Behörighet: chatta som %s. Ingen admin-, fil- eller kommandobehörighet.</p>
+<p class="scope">Behörighet: chatta och skapa media som %s. Ingen admin-, lokal fil- eller kommandobehörighet.</p>
 <form method="post" action="/eutherpunk/cli/authorize">
   <input type="hidden" name="user_code" value="%s">
   <input type="hidden" name="csrf" value="%s">

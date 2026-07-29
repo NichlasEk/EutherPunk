@@ -750,7 +750,7 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		if system == "" {
 			system = systemPromptForMessages(prompts, messages)
 		}
-		if !visionRequest {
+		if !visionRequest && clientSupportsImageTool(r) {
 			system = systemPromptWithImageTool(system, prompts)
 		}
 
@@ -825,7 +825,7 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 		if system == "" {
 			system = systemPromptForMessages(prompts, messages)
 		}
-		if !visionRequest {
+		if !visionRequest && clientSupportsImageTool(r) {
 			system = systemPromptWithImageTool(system, prompts)
 		}
 
@@ -892,6 +892,26 @@ func handleEutherNetForClient(r *http.Request, cfg serverConfig, messages []olla
 		return "", false, nil
 	}
 	return handleEutherNetSlash(r.Context(), cfg, lastUserMessage(messages))
+}
+
+func clientSupportsImageTool(r *http.Request) bool {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("X-EutherPunk-Client-Mode")), "chat-only") {
+		return true
+	}
+	if !headerHasToken(r.Header.Get("X-EutherPunk-Client-Capabilities"), "image-tool") {
+		return false
+	}
+	principal, ok := principalFromContext(r.Context())
+	return ok && hasScope(principal, "eutherpunk:media")
+}
+
+func headerHasToken(value, wanted string) bool {
+	for _, token := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(token), wanted) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleEutherNetSlash(ctx context.Context, cfg serverConfig, message string) (string, bool, error) {

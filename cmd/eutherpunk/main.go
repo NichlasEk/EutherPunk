@@ -382,6 +382,25 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		}
 
 		history = append(history, chatMessage{Role: "user", Content: prompt})
+		if pendingJob.Job.ID != "" {
+			if refreshErr := refreshPendingWorkspaceJob(
+				context.Background(),
+				cfg,
+				&pendingJob,
+				os.Stdout,
+			); refreshErr != nil {
+				fmt.Fprintln(os.Stderr, "kodjobbsvarning:", refreshErr)
+			} else {
+				switch strings.ToLower(strings.TrimSpace(pendingJob.Job.Status)) {
+				case "failed", "cancelled", "expired":
+					fmt.Printf(
+						"eutherpunk> föregående kodjobb är %s; nästa arbetsyteförfrågan kan starta ett nytt jobb.\n",
+						workspaceJobStatusLabel(pendingJob.Job.Status),
+					)
+					pendingJob = pendingWorkspaceJob{}
+				}
+			}
+		}
 		if cfg.workspace.Root != "" && pendingJob.Job.ID == "" {
 			fmt.Println("eutherpunk> startar kodjobb…")
 			startedJob, started, startErr := beginBackgroundWorkspaceJob(
@@ -434,17 +453,18 @@ func assist(cfg cliConfig, initialPrompt string) error {
 		fmt.Println("eutherpunk> arbetar… (Esc Esc avbryter)")
 		var answer string
 		var err error
-		chatCfg := cfg
-		if pendingJob.Job.ID != "" && strings.TrimSpace(pendingJob.Job.Model) != "" {
-			chatCfg.model = pendingJob.Job.Model
+		if pendingJob.Job.ID != "" {
 			fmt.Printf(
-				"eutherpunk> jag är kvar; svarar via %s. Om kodaren använder modellplatsen köas svaret en stund.\n",
-				chatCfg.model,
+				"eutherpunk> kodjobbet är %s; chatten svarar separat via %s och kan köas medan GPU:n är upptagen.\n",
+				workspaceJobStatusLabel(pendingJob.Job.Status),
+				cfg.model,
 			)
 		}
+		imageOutput := newImageDirectiveWriter(os.Stdout)
 		answer, err = runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
-			return streamChatContext(ctx, chatCfg, trimHistory(history), os.Stdout)
+			return streamChatContext(ctx, cfg, trimHistory(history), imageOutput)
 		})
+		outputErr := imageOutput.Finish()
 		if err != nil {
 			fmt.Println()
 			if errors.Is(err, errAgentInterrupted) {
@@ -458,10 +478,81 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			prompt = ""
 			continue
 		}
+		if outputErr != nil {
+			fmt.Println()
+			fmt.Fprintln(os.Stderr, "utskriftsfel:", outputErr)
+			history = history[:len(history)-1]
+			prompt = ""
+			continue
+		}
 		fmt.Println()
-		history = append(history, chatMessage{Role: "assistant", Content: answer})
+		visibleAnswer, imagePrompt, hasImagePrompt := extractImageToolDirective(answer)
+		if visibleAnswer == "" && hasImagePrompt {
+			visibleAnswer = "Jag skickar bildprompten till EutherPunks bildgenerator."
+			fmt.Println("eutherpunk>", visibleAnswer)
+		}
+		history = append(history, chatMessage{Role: "assistant", Content: visibleAnswer})
 		history = trimHistory(history)
+		if hasImagePrompt {
+			fmt.Println("eutherpunk> genererar bildasset… (Esc Esc avbryter)")
+			var image cliImageResponse
+			_, imageErr := runInterruptibleAgentCall(os.Stdout, func(ctx context.Context) (string, error) {
+				var generateErr error
+				image, generateErr = generateCLIImage(ctx, cfg, imagePrompt, trimHistory(history), os.Stdout)
+				return "", generateErr
+			})
+			if imageErr != nil {
+				if errors.Is(imageErr, errAgentInterrupted) {
+					fmt.Println("Bildjobbet avbröts. Du kan fortsätta skriva.")
+				} else if strings.Contains(imageErr.Error(), "insufficient_scope") {
+					fmt.Fprintln(os.Stderr, "bildfel: din befintliga CLI-inloggning saknar mediaåtkomst; kör /logout och starta eutherpunk igen för att godkänna det nya scopet")
+				} else {
+					fmt.Fprintln(os.Stderr, "bildfel:", imageErr)
+				}
+			} else {
+				assetPath, saved, saveErr := saveCLIImageAsset(
+					context.Background(),
+					cfg,
+					reader,
+					&permissions,
+					image,
+				)
+				if saveErr != nil {
+					fmt.Fprintln(os.Stderr, "bildfel:", saveErr)
+				} else if saved {
+					fmt.Println("eutherpunk> bildasset sparad:", assetPath)
+					history = append(history, chatMessage{
+						Role:    "assistant",
+						Content: "Bildasset sparad i arbetsytan: " + assetPath,
+					})
+					history = trimHistory(history)
+				} else {
+					fmt.Println("eutherpunk> bild klar på servern:", absoluteCLIURL(cfg.apiURL, image.URL))
+				}
+			}
+		}
 		prompt = ""
+	}
+}
+
+func workspaceJobStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "queued":
+		return "köat"
+	case "running":
+		return "igång"
+	case "completed":
+		return "klart och väntar på /job open"
+	case "needs_review":
+		return "klart men behöver granskas med /job open"
+	case "failed":
+		return "misslyckat; använd /job"
+	case "cancelled":
+		return "avbrutet"
+	case "expired":
+		return "utgånget"
+	default:
+		return "aktivt"
 	}
 }
 
@@ -500,6 +591,7 @@ func streamChatContext(ctx context.Context, cfg cliConfig, messages []chatMessag
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "eutherpunk-cli/"+version)
 	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	req.Header.Set("X-EutherPunk-Client-Capabilities", "image-tool")
 	if err := cfg.authorize(req); err != nil {
 		return "", err
 	}
@@ -561,6 +653,7 @@ func ask(cfg cliConfig, prompt string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "eutherpunk-cli/"+version)
 	req.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	req.Header.Set("X-EutherPunk-Client-Capabilities", "image-tool")
 	if err := cfg.authorize(req); err != nil {
 		return err
 	}

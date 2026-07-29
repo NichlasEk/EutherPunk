@@ -50,6 +50,9 @@ func TestStreamChatSendsConversationHistory(t *testing.T) {
 		if got := req.Header.Get("X-EutherPunk-Client-Mode"); got != "chat-only" {
 			t.Fatalf("client mode header = %q", got)
 		}
+		if got := req.Header.Get("X-EutherPunk-Client-Capabilities"); got != "image-tool" {
+			t.Fatalf("client capabilities header = %q", got)
+		}
 		if got := req.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Fatalf("authorization header = %q", got)
 		}

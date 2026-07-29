@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,30 @@ import (
 	"testing"
 	"time"
 )
+
+func TestCLIImageToolRequiresMediaScope(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/eutherpunk/chat/stream", nil)
+	request.Header.Set("X-EutherPunk-Client-Mode", "chat-only")
+	request.Header.Set("X-EutherPunk-Client-Capabilities", "image-tool")
+
+	chatOnly := request.WithContext(context.WithValue(request.Context(), authContextKey{}, authPrincipal{
+		User:     "nichlas",
+		Scopes:   []string{"eutherpunk:chat"},
+		AuthMode: "cli_token",
+	}))
+	if clientSupportsImageTool(chatOnly) {
+		t.Fatal("chat-only token gained the image tool")
+	}
+
+	withMedia := request.WithContext(context.WithValue(request.Context(), authContextKey{}, authPrincipal{
+		User:     "nichlas",
+		Scopes:   []string{"eutherpunk:chat", "eutherpunk:media"},
+		AuthMode: "cli_token",
+	}))
+	if !clientSupportsImageTool(withMedia) {
+		t.Fatal("media-scoped CLI did not gain the image tool")
+	}
+}
 
 func TestAuthStoreDeviceFlowRefreshAndRevoke(t *testing.T) {
 	store, err := loadAuthStore(filepath.Join(t.TempDir(), "auth.json"))
@@ -42,11 +67,13 @@ func TestAuthStoreDeviceFlowRefreshAndRevoke(t *testing.T) {
 	if err != nil || code != "" {
 		t.Fatalf("exchange = %#v, %q, %v", tokens, code, err)
 	}
-	if tokens.User != "nichlas" || len(tokens.Scopes) != 1 || tokens.Scopes[0] != "eutherpunk:chat" {
+	if tokens.User != "nichlas" || len(tokens.Scopes) != 2 ||
+		tokens.Scopes[0] != "eutherpunk:chat" || tokens.Scopes[1] != "eutherpunk:media" {
 		t.Fatalf("tokens = %#v", tokens)
 	}
 	got, ok := store.authenticate(tokens.AccessToken)
-	if !ok || got.User != "nichlas" || !hasScope(got, "eutherpunk:chat") {
+	if !ok || got.User != "nichlas" ||
+		!hasScope(got, "eutherpunk:chat") || !hasScope(got, "eutherpunk:media") {
 		t.Fatalf("principal = %#v, %v", got, ok)
 	}
 

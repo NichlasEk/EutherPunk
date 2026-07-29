@@ -17,9 +17,9 @@ the CLI receives only a narrowly scoped, revocable EutherPunk credential.
 4. EutherOxide must report an authenticated session with
    `eutherIdVerified=true`. A password-created session is deliberately
    insufficient.
-5. The page shows the CLI name, account and exact `eutherpunk:chat` scope. The
-   user explicitly approves or denies it. POST approval is CSRF- and
-   same-origin-protected.
+5. The page shows the CLI name, account and the exact `eutherpunk:chat` and
+   `eutherpunk:media` scopes. The user explicitly approves or denies them. POST
+   approval is CSRF- and same-origin-protected.
 6. The CLI polls with the opaque device code and its original PKCE verifier.
    One successful exchange consumes the device grant.
 7. The server issues a one-hour access token and a rotating 30-day refresh
@@ -34,8 +34,10 @@ the CLI receives only a narrowly scoped, revocable EutherPunk credential.
   Credential Manager, keyed by the EutherPunk API URL.
 - The refresh token is rotated on every use. A consumed refresh token cannot be
   reused.
-- CLI bearer tokens have only `eutherpunk:chat`. Browser principals may use
-  other routes according to their EutherOxide admin role.
+- CLI bearer tokens have only `eutherpunk:chat` and `eutherpunk:media`.
+  `eutherpunk:media` permits server-side image and voice jobs but grants no
+  local file access. Browser principals may use other routes according to
+  their EutherOxide admin role.
 - Request user identity comes from the authenticated principal. Public
   `X-User`-style headers are not trusted.
 
@@ -65,7 +67,8 @@ reverse-proxy request limits and monitoring.
 
 This authenticates access to EutherPunk; it does not grant local file, shell or
 administrator rights. A separate local workspace permission may grant bounded
-text-file access, but the bearer token itself never does so. An
+file access, including saving a generated PNG under the selected workspace,
+but the bearer token itself never does so. An
 EutherID browser session proves who approved the client, not that every later
 local action is safe. Future tools therefore need their own visible
 permissions and per-action approval rules.

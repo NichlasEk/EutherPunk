@@ -201,9 +201,21 @@ while one coding job works in the background. `/job` polls its activity,
 proposal, and `/job cancel` stops it. Escape twice while waiting also sends a
 server-side cancellation. Completed, failed, cancelled, and expired jobs
 therefore have explicit outcomes instead of depending on one long proxy request.
-While a coding job exists, conversational turns reuse its already-loaded model
-to avoid a long Ollama model swap. Normal chat returns to the configured
-conversational model after the proposal is opened or the job is cancelled.
+While a coding job exists, conversational turns remain on the configured chat
+model. The CLI reports whether the coding job is queued, running, completed or
+waiting for review instead of silently routing conversation through the coding
+model. A response can queue briefly while Ollama switches the shared GPU, but
+the chat and coding roles never change places.
+
+The interactive CLI can also turn an explicit image request into a server-side
+image job. Its streamed `EUTHERPUNK_IMAGE_PROMPT` tool line is hidden, the CLI
+polls the real image job, downloads only a same-origin PNG, and saves it under
+`assets/` in the selected workspace. `files = "auto"` writes the new asset
+automatically; other enabled file modes ask first. Existing filenames,
+symlinked paths, cross-origin URLs, non-PNG responses and images larger than
+32 MiB are rejected. This requires both `eutherpunk:chat` and
+`eutherpunk:media` scopes. Tokens issued before this capability was introduced
+must be replaced with `/logout` followed by a new EutherID browser approval.
 
 ### Non-interactive local worker
 
@@ -421,11 +433,13 @@ PKCE-protected request, opens `apothictech.se`, and waits for an explicit
 approval from a browser session that was verified with EutherID. No EutherID
 password, internal EutherID token, or server key is entered into the CLI.
 
-The issued CLI token is limited to `eutherpunk:chat`: it cannot administer
-EutherPunk, change server settings, access stored web conversations, generate
-media, read local files, or execute commands. Access tokens last one hour and
-the rotating refresh token lasts at most 30 days. `/logout` revokes the whole
-token family.
+The issued CLI token is limited to `eutherpunk:chat` and `eutherpunk:media`: it
+cannot administer EutherPunk, change server settings, access stored web
+conversations, read local files, or execute commands. The media scope permits
+server-side image generation; the separate local workspace permission still
+decides whether the returned asset may be written to disk. Access tokens last
+one hour and the rotating refresh token lasts at most 30 days. `/logout`
+revokes the whole token family.
 
 On Windows the credential is stored in Windows Credential Manager. Other
 platforms use a separate mode-`0600` credential file beside the config for

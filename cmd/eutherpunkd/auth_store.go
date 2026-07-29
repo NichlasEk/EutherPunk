@@ -276,7 +276,7 @@ func (store *authStore) exchange(deviceCode, verifier string) (issuedTokens, str
 	default:
 		return issuedTokens{}, "invalid_grant", errors.New("authorization request was already consumed")
 	}
-	tokens, err := store.issueLocked(grant.User, []string{"eutherpunk:chat"}, "")
+	tokens, err := store.issueLocked(grant.User, []string{"eutherpunk:chat", "eutherpunk:media"}, "")
 	if err != nil {
 		return issuedTokens{}, "server_error", err
 	}
