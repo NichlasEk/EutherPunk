@@ -3,3 +3,6 @@ dist/
 var/images/
 .gocache/
 .gotmp/
+training/traces/
+training/outputs/
+training/models/

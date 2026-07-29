@@ -44,6 +44,7 @@ type workerResult struct {
 	Message            string                 `json:"message,omitempty"`
 	CheckpointRevision int                    `json:"checkpoint_revision,omitempty"`
 	Files              []workerResultFile     `json:"files,omitempty"`
+	Drafts             []workerResultDraft    `json:"drafts,omitempty"`
 	Issues             []string               `json:"issues,omitempty"`
 	Activities         []workspaceJobActivity `json:"activities,omitempty"`
 	Error              string                 `json:"error,omitempty"`
@@ -56,6 +57,11 @@ type workerResultFile struct {
 	Bytes   int    `json:"bytes"`
 	SHA256  string `json:"sha256"`
 	Content string `json:"content"`
+}
+
+type workerResultDraft struct {
+	Revision int                `json:"revision"`
+	Files    []workerResultFile `json:"files"`
 }
 
 func runWorker(cfg *cliConfig, args []string, stdout, stderr io.Writer) error {
@@ -184,6 +190,7 @@ func runWorker(cfg *cliConfig, args []string, stdout, stderr io.Writer) error {
 		resultFiles = currentJob.DraftFiles
 	}
 	result.Files = workerResultFiles(resultFiles)
+	result.Drafts = workerResultDrafts(currentJob.Drafts)
 
 	switch {
 	case waitErr != nil && (errors.Is(waitErr, errAgentInterrupted) || errors.Is(ctx.Err(), context.Canceled)):
@@ -279,6 +286,17 @@ func workerResultFiles(files []workspaceFile) []workerResultFile {
 			Bytes:   len(file.Content),
 			SHA256:  hex.EncodeToString(sum[:]),
 			Content: file.Content,
+		})
+	}
+	return out
+}
+
+func workerResultDrafts(drafts []workspaceJobDraft) []workerResultDraft {
+	out := make([]workerResultDraft, 0, len(drafts))
+	for _, draft := range drafts {
+		out = append(out, workerResultDraft{
+			Revision: draft.Revision,
+			Files:    workerResultFiles(draft.Files),
 		})
 	}
 	return out

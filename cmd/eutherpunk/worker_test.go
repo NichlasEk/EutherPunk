@@ -50,6 +50,11 @@ func TestWorkerProposalOnlyReturnsJSONWithoutWriting(t *testing.T) {
 		result.Files[0].SHA256 == "" {
 		t.Fatalf("files = %#v", result.Files)
 	}
+	if len(result.Drafts) != 1 ||
+		result.Drafts[0].Revision != 1 ||
+		len(result.Drafts[0].Files) != 1 {
+		t.Fatalf("drafts = %#v", result.Drafts)
+	}
 	if _, err := os.Stat(filepath.Join(root, "worker.txt")); !os.IsNotExist(err) {
 		t.Fatalf("proposal-only worker wrote a file: %v", err)
 	}
@@ -288,6 +293,10 @@ func workerTestServer(t *testing.T, inspect func(chatRequest)) *httptest.Server 
 				Files:      files,
 				DraftFiles: files,
 				DraftRev:   1,
+				Drafts: []workspaceJobDraft{{
+					Revision: 1,
+					Files:    files,
+				}},
 				Activities: []workspaceJobActivity{{
 					Sequence: 2,
 					Message:  "Kvalitetsgranskning 1 godkände förslaget.",

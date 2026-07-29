@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -121,30 +122,112 @@ func repairWorkspaceProposalOllama(
 	if len(proposalJSON) > maxWorkspaceReviewBytes {
 		return "", nil, errors.New("filförslaget är för stort för reparationsvarv")
 	}
+	issueText := strings.ToLower(strings.Join(issues, "\n"))
+	selected := make([]bool, len(files))
+	selectedCount := 0
+	for index, file := range files {
+		path := strings.ToLower(strings.TrimSpace(file.Path))
+		base := strings.ToLower(filepath.Base(path))
+		if path != "" && (strings.Contains(issueText, path) ||
+			(base != "" && strings.Contains(issueText, base))) {
+			selected[index] = true
+			selectedCount++
+		}
+	}
+	if selectedCount == 0 {
+		for index := range selected {
+			selected[index] = true
+		}
+	}
+
+	repaired := append([]workspaceResponseFile(nil), files...)
+	for index, file := range files {
+		if !selected[index] {
+			continue
+		}
+		reportWorkspaceProgress(
+			progress,
+			fmt.Sprintf("Reparerar %s direkt utan en ny filplan.", file.Path),
+		)
+		content, err := repairWorkspaceFileOllama(
+			ctx,
+			ollamaURL,
+			model,
+			task,
+			proposalJSON,
+			file,
+			issues,
+		)
+		if err != nil {
+			return "", nil, fmt.Errorf("reparera %s: %w", file.Path, err)
+		}
+		repaired[index].Content = content
+	}
+	return message, repaired, nil
+}
+
+func repairWorkspaceFileOllama(
+	ctx context.Context,
+	ollamaURL, model, task string,
+	proposalJSON []byte,
+	file workspaceResponseFile,
+	issues []string,
+) (string, error) {
 	repairPrompt := fmt.Sprintf(
-		`Uppgiften är:
+		`UPPGIFT:
 %s
 
-Här är ditt senaste kompletta filförslag:
+HELA SENASTE FILFÖRSLAGET:
 %s
 
-En oberoende körbarhetsgranskning hittade följande konkreta fel:
+VERIFIERADE FEL:
 - %s
 
-Reparera samtliga fel. Returnera återigen kompletta slutliga filer, inte en
-diff, inte resonemang och inte tester som ersätter den begärda funktionen.`,
+REPARERA NU ENDAST FILEN %q.
+
+Returnera filens kompletta korrigerade innehåll. Verkställ ändringarna i koden;
+upprepa inte bara diagnosen. Bevara fungerande API:n och beteenden. Returnera
+inte en diff, Markdown eller resonemang.`,
 		strings.TrimSpace(task),
 		proposalJSON,
 		strings.Join(issues, "\n- "),
+		file.Path,
 	)
-	return askWorkspaceOllama(
+	format := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"content": map[string]any{"type": "string"},
+		},
+		"required": []string{"content"},
+	}
+	content, err := askWorkspaceStructuredTimeout(
 		ctx,
 		ollamaURL,
 		model,
-		"Du reparerar ett redan granskat kodförslag. Bevara fungerande delar men prioritera korrekt körbarhet.",
+		`Du är en precis filreparatör. Ett tidigare utkast och verifierade fel
+finns i användarmeddelandet. Ändra den angivna filen så felen faktiskt
+försvinner. Svara endast med JSON enligt schemat.`,
 		[]ollamaMessage{{Role: "user", Content: repairPrompt}},
-		progress,
+		format,
+		6144,
+		5*time.Minute,
 	)
+	if err != nil {
+		return "", err
+	}
+	var generated struct {
+		Content string `json:"content"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&generated); err != nil {
+		return "", fmt.Errorf("tolka reparerad fil: %w", err)
+	}
+	if strings.TrimSpace(generated.Content) == "" {
+		return "", errors.New("modellen returnerade en tom reparerad fil")
+	}
+	return generated.Content, nil
 }
 
 func askWorkspaceStructured(

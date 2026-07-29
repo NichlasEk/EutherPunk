@@ -243,14 +243,37 @@ are modified. Result statuses are `completed`, `needs_review`, `no_change`,
 `failed`, or `cancelled`. A timeout can be selected with `--timeout`, up to
 30 minutes.
 
+Worker JSON includes the complete bounded revision history under `drafts`.
+After an external verifier has checked and, when necessary, corrected the
+workspace, the result can be converted into a private adapter-training trace:
+
+```bash
+eutherpunk trace finalize \
+  --result /tmp/worker-result.json \
+  --workspace /tmp/eutherpunk-task \
+  --diagnostics /tmp/verification.txt \
+  --verdict accepted \
+  --output /tmp/training-trace.json
+```
+
+The trace binds the original task, model/job provenance, every model draft,
+review issues, verifier diagnostics, and the current corrected target files.
+It omits the absolute workspace path, uses an atomic private output file, never
+uploads anything, and rejects symlinked inputs or a result from another
+workspace. Training traces contain source code and must still be treated as
+sensitive local data; inspect them before adding them to any dataset or Git
+repository.
+
 The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured
 format validation, and local proposal validation. It deliberately does not
 expose private model reasoning or stream unvalidated partial source code.
 Before a proposal becomes available, a separate adversarial review pass checks
 its behavior against the request. Concrete defects are fed back into up to two
-complete repair rounds. A proposal that still fails review is withheld instead
-of being presented as usable code.
+repair rounds. Repairs target the files named by the diagnostics directly,
+without asking the model to create a new file plan, while unaffected files are
+preserved. A proposal that still fails review is withheld instead of being
+presented as usable code.
 The server may use a dedicated coding model through
 `EUTHERPUNK_WORKSPACE_MODEL`; it defaults to the server agent model while normal
 chat keeps the user's selected conversational model.
