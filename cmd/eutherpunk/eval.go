@@ -74,6 +74,7 @@ type evalCaseResult struct {
 	Model              string   `json:"model,omitempty"`
 	VerifierPassed     bool     `json:"verifier_passed"`
 	PreservationPassed bool     `json:"preservation_passed"`
+	RepairRounds       int      `json:"repair_rounds"`
 	ChangedFiles       []string `json:"changed_files,omitempty"`
 	PreservationErrors []string `json:"preservation_errors,omitempty"`
 	WorkerResult       string   `json:"worker_result"`
@@ -92,7 +93,10 @@ type evalMetrics struct {
 	MeanDurationMS        int64   `json:"mean_duration_ms"`
 }
 
-var runEvalWorker = runWorker
+var (
+	runEvalWorker = runWorker
+	runEvalRepair = runEvalVerifiedRepair
+)
 
 func runEval(cfg *cliConfig, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] != "run" {
@@ -332,13 +336,63 @@ func executeEvalCase(
 	result.WorkerStatus = worker.Status
 	result.JobID = worker.JobID
 	result.Model = worker.Model
+
+	verifyOutput, verifierErr := runEvalVerifier(workspaceRoot, test.Verifier)
+	diagnosticRounds := []string{
+		formatEvalDiagnosticRound(0, test.Verifier, verifyOutput, verifierErr, workerErr),
+	}
+	for verifierErr != nil &&
+		result.RepairRounds < 2 &&
+		worker.JobID != "" &&
+		worker.Status == "completed" &&
+		len(worker.Files) > 0 {
+		result.RepairRounds++
+		_, _ = fmt.Fprintf(
+			stderr,
+			"eval %s: verifierad reparation %d startar\n",
+			test.ID,
+			result.RepairRounds,
+		)
+		diagnostic := formatEvalDiagnostics(test.Verifier, verifyOutput, verifierErr, nil)
+		updated, repairErr := runEvalRepair(
+			cfg,
+			workspaceRoot,
+			worker,
+			diagnostic,
+			timeout,
+			stderr,
+		)
+		if repairErr != nil {
+			diagnosticRounds = append(
+				diagnosticRounds,
+				fmt.Sprintf("repair round %d: failed: %v\n", result.RepairRounds, repairErr),
+			)
+			break
+		}
+		worker = updated
+		if err := writeEvalWorkerResult(resultPath, worker); err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		result.WorkerStatus = worker.Status
+		result.Model = worker.Model
+		verifyOutput, verifierErr = runEvalVerifier(workspaceRoot, test.Verifier)
+		diagnosticRounds = append(
+			diagnosticRounds,
+			formatEvalDiagnosticRound(
+				result.RepairRounds,
+				test.Verifier,
+				verifyOutput,
+				verifierErr,
+				nil,
+			),
+		)
+	}
+	result.VerifierPassed = verifierErr == nil
 	result.ChangedFiles = changedEvalFiles(workspaceRoot, initial)
 	result.PreservationErrors = checkEvalPreservation(workspaceRoot, preserved)
 	result.PreservationPassed = len(result.PreservationErrors) == 0
-
-	verifyOutput, verifierErr := runEvalVerifier(workspaceRoot, test.Verifier)
-	result.VerifierPassed = verifierErr == nil
-	diagnostics := formatEvalDiagnostics(test.Verifier, verifyOutput, verifierErr, workerErr)
+	diagnostics := strings.Join(diagnosticRounds, "\n")
 	if err := writeProjectMemoryFileAtomic(diagnosticsPath, []byte(diagnostics)); err != nil {
 		result.Error = err.Error()
 		return result
@@ -376,6 +430,96 @@ func executeEvalCase(
 		result.PreservationPassed,
 	)
 	return result
+}
+
+func runEvalVerifiedRepair(
+	cfg *cliConfig,
+	workspaceRoot string,
+	worker workerResult,
+	diagnostics string,
+	timeout time.Duration,
+	stderr io.Writer,
+) (workerResult, error) {
+	if len(diagnostics) > 16*1024 {
+		diagnostics = diagnostics[:16*1024]
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	job, err := requestWorkspaceJobRepair(ctx, *cfg, worker.JobID, diagnostics)
+	if err != nil {
+		return worker, err
+	}
+	current := job
+	lastActivity := 1
+	if count := len(worker.Activities); count > 0 {
+		lastActivity = worker.Activities[count-1].Sequence + 1
+	}
+	lastDraftRevision := worker.CheckpointRevision
+	backedUpPaths := map[string]bool{}
+	message, proposal, waitErr := waitWorkspaceJob(
+		ctx,
+		*cfg,
+		job,
+		stderr,
+		&lastActivity,
+		func(update workspaceJobResponse) error {
+			current = update
+			if update.DraftRev <= lastDraftRevision {
+				return nil
+			}
+			if len(update.DraftFiles) == 0 {
+				return errors.New("reparationen rapporterade en arbetskopierevision utan filer")
+			}
+			if err := applyWorkspaceDraft(
+				workspaceState{Root: workspaceRoot},
+				update.DraftFiles,
+				update.DraftRev,
+				backedUpPaths,
+				stderr,
+			); err != nil {
+				return err
+			}
+			lastDraftRevision = update.DraftRev
+			return nil
+		},
+	)
+	worker.JobID = current.ID
+	worker.Model = current.Model
+	worker.Message = message
+	worker.CheckpointRevision = current.DraftRev
+	worker.Activities = append([]workspaceJobActivity(nil), current.Activities...)
+	worker.Issues = projectReviewIssues(current.Activities)
+	resultFiles := proposal.Files
+	if len(resultFiles) == 0 && current.DraftRev > 0 {
+		resultFiles = current.DraftFiles
+	}
+	worker.Files = workerResultFiles(resultFiles)
+	worker.Drafts = workerResultDrafts(current.Drafts)
+	worker.Applied = worker.Applied || current.DraftRev > 0
+	worker.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	switch {
+	case waitErr != nil:
+		worker.Status = "failed"
+		worker.Error = waitErr.Error()
+	case len(proposal.Files) > 0:
+		worker.Status = "completed"
+		worker.Error = ""
+	case current.DraftRev > 0:
+		worker.Status = "needs_review"
+		worker.Error = ""
+	default:
+		worker.Status = "no_change"
+		worker.Error = ""
+	}
+	return worker, waitErr
+}
+
+func writeEvalWorkerResult(path string, result workerResult) error {
+	raw, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeProjectMemoryFileAtomic(path, append(raw, '\n'))
 }
 
 func runEvalVerifier(root string, command []string) (string, error) {
@@ -463,6 +607,19 @@ func formatEvalDiagnostics(command []string, output string, verifierErr, workerE
 		builder.WriteByte('\n')
 	}
 	return builder.String()
+}
+
+func formatEvalDiagnosticRound(
+	round int,
+	command []string,
+	output string,
+	verifierErr, workerErr error,
+) string {
+	return fmt.Sprintf(
+		"verification round %d:\n%s",
+		round,
+		formatEvalDiagnostics(command, output, verifierErr, workerErr),
+	)
 }
 
 func calculateEvalMetrics(cases []evalCaseResult) evalMetrics {

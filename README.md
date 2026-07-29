@@ -281,6 +281,12 @@ accepted/rejected training trace. `summary.json` reports executable pass rate,
 protected-file preservation, harness completion and timing. It also records the
 suite SHA-256 and CLI version so later A/B runs remain attributable.
 
+If the executable verifier fails an otherwise completed proposal, the evaluator
+sends the bounded real diagnostics back to the existing server job, applies the
+new draft and verifies it again. This loop is limited to two rounds. The worker
+result, trace and diagnostics retain all revisions and verification rounds
+instead of replacing the failed evidence.
+
 Evaluation suites are trusted developer inputs. Verifiers are invoked directly
 without a shell and are restricted to `go`, `node`, `cargo`, `lua` and `luac`.
 The bundled v1 suite currently uses only `go test ./...`. Results and traces

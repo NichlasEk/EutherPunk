@@ -143,5 +143,13 @@ The third workspace passed its executable tests but the model reviewer still
 withheld it after inventing Unicode, extra separator and additional-test
 requirements. This is evidence of reviewer overreach rather than a coding
 failure. The review contract now explicitly rejects invented requirements.
+
+A follow-up calibration run showed the inverse failure: the calibrated reviewer
+accepted a slug implementation that left leading and trailing hyphens, while
+the executable test rejected it. The evaluator therefore now performs up to two
+bounded diagnostic-driven repair rounds and reruns the same verifier after each
+draft. Both the original failure and later verification outcomes remain in the
+training trace.
+
 Future baselines must use a new named output directory and record the exact
 harness commit so results remain comparable.
