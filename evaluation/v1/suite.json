@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name": "eutherpunk-repair-core",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "go-compiler-repair",
+      "task": "Make `go test ./...` pass by implementing the missing production function. Do not change tests. Return complete files, with no placeholders.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/compilerrepair\n\ngo 1.22\n"
+        },
+        {
+          "path": "clamp.go",
+          "content": "package compilerrepair\n\nfunc Limit(value, minimum, maximum int) int {\n\treturn clamp(value, minimum, maximum)\n}\n"
+        },
+        {
+          "path": "clamp_test.go",
+          "content": "package compilerrepair\n\nimport \"testing\"\n\nfunc TestLimit(t *testing.T) {\n\tfor _, test := range []struct{ value, minimum, maximum, want int }{\n\t\t{-2, 0, 10, 0},\n\t\t{4, 0, 10, 4},\n\t\t{14, 0, 10, 10},\n\t} {\n\t\tif got := Limit(test.value, test.minimum, test.maximum); got != test.want {\n\t\t\tt.Fatalf(\"Limit(%d, %d, %d) = %d, want %d\", test.value, test.minimum, test.maximum, got, test.want)\n\t\t}\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    },
+    {
+      "id": "go-cross-file-api",
+      "task": "Repair the production API so `go test ./...` passes. Preserve the public function name and do not change tests or the module file.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/counter\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "counter.go",
+          "content": "package counter\n\nfunc Add(value int) int {\n\treturn value + 1\n}\n"
+        },
+        {
+          "path": "counter_test.go",
+          "content": "package counter\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(19, 23); got != 42 {\n\t\tt.Fatalf(\"Add(19, 23) = %d, want 42\", got)\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    },
+    {
+      "id": "go-placeholder-removal",
+      "task": "Complete the production implementation so `go test ./...` passes. Remove the placeholder behavior, handle repeated separators, and do not modify tests.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/slug\n\ngo 1.22\n"
+        },
+        {
+          "path": "slug.go",
+          "content": "package slug\n\nfunc Make(input string) string {\n\t// TODO: implement\n\treturn \"\"\n}\n"
+        },
+        {
+          "path": "slug_test.go",
+          "content": "package slug\n\nimport \"testing\"\n\nfunc TestMake(t *testing.T) {\n\tfor input, want := range map[string]string{\n\t\t\"Hello World\": \"hello-world\",\n\t\t\"  Punk___Scout  \": \"punk-scout\",\n\t\t\"Already-clean\": \"already-clean\",\n\t} {\n\t\tif got := Make(input); got != want {\n\t\t\tt.Fatalf(\"Make(%q) = %q, want %q\", input, got, want)\n\t\t}\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    }
+  ]
+}

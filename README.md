@@ -264,6 +264,28 @@ workspace. Training traces contain source code and must still be treated as
 sensitive local data; inspect them before adding them to any dataset or Git
 repository.
 
+### Frozen local-model evaluation
+
+The repository contains a small versioned core suite under
+`evaluation/v1/suite.json`. Run it from a clean output path:
+
+```bash
+eutherpunk eval run \
+  --suite evaluation/v1/suite.json \
+  --output training/outputs/devstral-baseline-v1
+```
+
+Use `--case go-compiler-repair` for one case. Every case gets an isolated
+workspace, the full worker result, bounded verifier diagnostics and an automatic
+accepted/rejected training trace. `summary.json` reports executable pass rate,
+protected-file preservation, harness completion and timing. It also records the
+suite SHA-256 and CLI version so later A/B runs remain attributable.
+
+Evaluation suites are trusted developer inputs. Verifiers are invoked directly
+without a shell and are restricted to `go`, `node`, `cargo`, `lua` and `luac`.
+The bundled v1 suite currently uses only `go test ./...`. Results and traces
+remain private under ignored `training/` directories.
+
 The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured
 format validation, and local proposal validation. It deliberately does not

@@ -119,3 +119,29 @@ the corresponding source. The parent agent corrected the file and verified
 
 The local trace was finalized as schema version 1. It is intentionally not
 committed because it contains generated and corrected source.
+
+## First frozen baseline
+
+The versioned `evaluation/v1/suite.json` starts with three small Go cases:
+
+- repair of an undefined production helper;
+- repair of a cross-file public API mismatch;
+- removal of a functional placeholder with repeated-separator behavior.
+
+Tests and selected module files are marked as preserved inputs. The evaluator
+runs each job in an isolated workspace, invokes `go test ./...` without a shell,
+checks the protected hashes and finalizes a private trace automatically.
+
+The first live run against `devstral-small-2:24b` on 2026-07-29 produced:
+
+- executable pass rate: 3/3;
+- protected-file preservation: 3/3;
+- harness completion: 2/3;
+- mean wall time: 18.374 seconds.
+
+The third workspace passed its executable tests but the model reviewer still
+withheld it after inventing Unicode, extra separator and additional-test
+requirements. This is evidence of reviewer overreach rather than a coding
+failure. The review contract now explicitly rejects invented requirements.
+Future baselines must use a new named output directory and record the exact
+harness commit so results remain comparable.

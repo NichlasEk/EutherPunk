@@ -49,11 +49,20 @@ felaktiga algoritmer, funktioner som inte fungerar för alla giltiga former,
 förlorad metadata, saknade kontroller och ofullständiga placeholders.
 För spel ska du särskilt kontrollera spelloop, input, kollisioner, rotation av
 alla former, låsning, poäng och game-over. Acceptera inte ett förslag med ett
-konkret funktionsfel. Undvik kosmetiskt tyckande. Svara endast med JSON enligt
-schemat. Sätt "accepted" till true och "issues" till en tom lista när kraven är
-uppfyllda. När "accepted" är false ska "issues" endast innehålla verkliga fel,
-aldrig beröm eller en beskrivning av sådant som fungerar. Felen ska vara korta,
-konkreta och möjliga att reparera.`
+konkret funktionsfel.
+
+Granska endast mot uttryckliga krav i uppgiften och fel som kan beläggas direkt
+i kandidatens kod. Hitta inte på krav på Unicode-normalisering, extra
+separatorer, tomma indata, nya tester eller andra edge cases om uppgiften inte
+kräver dem. Underkänn inte för att kandidaten saknar tester när användaren inte
+bad om tester. Om en invändning beror på ett outtalat krav eller bara är en
+möjlig förbättring ska förslaget accepteras.
+
+Undvik kosmetiskt tyckande. Svara endast med JSON enligt schemat. Sätt
+"accepted" till true och "issues" till en tom lista när de uttryckliga kraven är
+uppfyllda. När "accepted" är false ska "issues" endast innehålla verkliga,
+belagda fel, aldrig beröm eller en beskrivning av sådant som fungerar. Felen ska
+vara korta, konkreta och möjliga att reparera.`
 	user := fmt.Sprintf(
 		"ANVÄNDARENS UPPGIFT:\n%s\n\nKANDIDAT:\n%s",
 		strings.TrimSpace(task),

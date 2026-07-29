@@ -10,7 +10,15 @@ import (
 )
 
 func TestWorkspaceReviewKeepsAcceptedBooleanAuthoritative(t *testing.T) {
-	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(request.Messages[0].Content, "outtalat krav") ||
+			!strings.Contains(request.Messages[0].Content, "Unicode-normalisering") {
+			t.Fatalf("review contract missing from system prompt: %q", request.Messages[0].Content)
+		}
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
 			Message: ollamaMessage{
 				Role: "assistant",
