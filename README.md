@@ -204,6 +204,45 @@ therefore have explicit outcomes instead of depending on one long proxy request.
 While a coding job exists, conversational turns reuse its already-loaded model
 to avoid a long Ollama model swap. Normal chat returns to the configured
 conversational model after the proposal is opened or the job is cancelled.
+
+### Non-interactive local worker
+
+`eutherpunk worker` exposes the bounded workspace harness to parent agents and
+scripts without an interactive terminal. The first worker role is
+`implementer`. It requires an existing EutherID login and never opens a browser,
+asks for permissions, runs shell commands, merges Git branches, or pushes.
+
+Proposal-only mode is the safe default:
+
+```bash
+eutherpunk worker \
+  --workspace /tmp/eutherpunk-task \
+  --task "Implement the parser described in TASK.md"
+```
+
+Progress is written to stderr. Stdout contains one JSON object with schema
+version, status, task, role, workspace, job/model provenance, activities,
+issues, checkpoint revision, and complete proposed files with sizes and
+SHA-256 hashes. An optional durable copy can be requested with
+`--output /path/to/result.json`.
+
+Writing requires the explicit `--apply` flag:
+
+```bash
+eutherpunk worker \
+  --workspace /tmp/eutherpunk-task \
+  --task "Implement the parser described in TASK.md" \
+  --apply \
+  --output /tmp/eutherpunk-task-result.json
+```
+
+With `--apply`, structured draft checkpoints are written only inside the
+selected workspace, originals are preserved as `.eutherpunk.previous`, and the
+project memory is updated. Without it, neither project files nor project memory
+are modified. Result statuses are `completed`, `needs_review`, `no_change`,
+`failed`, or `cancelled`. A timeout can be selected with `--timeout`, up to
+30 minutes.
+
 The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured
 format validation, and local proposal validation. It deliberately does not

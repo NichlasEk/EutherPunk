@@ -24,13 +24,14 @@ var (
 )
 
 type cliConfig struct {
-	apiURL      string
-	model       string
-	configPath  string
-	memory      memoryState
-	settings    cliSettings
-	credentials authCredentials
-	workspace   workspaceState
+	apiURL             string
+	model              string
+	configPath         string
+	memory             memoryState
+	settings           cliSettings
+	credentials        authCredentials
+	workspace          workspaceState
+	nonInteractiveAuth bool
 }
 
 type chatMessage struct {
@@ -141,6 +142,8 @@ func main() {
 		err = ask(cfg, strings.Join(os.Args[2:], " "))
 	case "chat":
 		err = chat(cfg, strings.Join(os.Args[2:], " "))
+	case "worker":
+		err = runWorker(&cfg, os.Args[2:], os.Stdout, os.Stderr)
 	case "version", "--version", "-version":
 		fmt.Println("EutherPunk", version)
 	case "help", "--help", "-h":
@@ -633,6 +636,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  eutherpunk logout")
 	fmt.Fprintln(os.Stderr, "  eutherpunk ask <prompt>")
 	fmt.Fprintln(os.Stderr, "  eutherpunk chat <prompt>")
+	fmt.Fprintln(os.Stderr, "  eutherpunk worker --workspace <directory> --task <task> [--apply]")
 	fmt.Fprintln(os.Stderr, "  eutherpunk version")
 }
 

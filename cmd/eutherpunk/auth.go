@@ -220,7 +220,7 @@ func (cfg *cliConfig) authJSON(method, path string, input any, bearer string, ou
 }
 
 func (cfg *cliConfig) authorize(req *http.Request) error {
-	if err := cfg.ensureAuthenticated(true); err != nil {
+	if err := cfg.ensureAuthenticated(!cfg.nonInteractiveAuth); err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.credentials.AccessToken)
