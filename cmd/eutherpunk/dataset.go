@@ -47,6 +47,7 @@ func (values *stringListFlag) Set(value string) error {
 type datasetExample struct {
 	SchemaVersion int              `json:"schema_version"`
 	ID            string           `json:"id"`
+	GroupID       string           `json:"group_id"`
 	SourceModel   string           `json:"source_model,omitempty"`
 	SourceJobID   string           `json:"source_job_id,omitempty"`
 	Messages      []datasetMessage `json:"messages"`
@@ -68,6 +69,8 @@ type datasetManifest struct {
 	DuplicatesRemoved   int      `json:"duplicates_removed"`
 	TrainExamples       int      `json:"train_examples"`
 	HoldoutExamples     int      `json:"holdout_examples"`
+	TrainGroups         int      `json:"train_groups"`
+	HoldoutGroups       int      `json:"holdout_groups"`
 	HoldoutPercent      int      `json:"holdout_percent"`
 	ManualReviewNeeded  bool     `json:"manual_license_and_secret_review_required"`
 	TrainingAuthorized  bool     `json:"training_authorized"`
@@ -193,9 +196,10 @@ func buildDataset(options datasetOptions) (datasetManifest, error) {
 		sorted = append(sorted, example)
 	}
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	holdoutGroups := selectDatasetHoldoutGroups(sorted, options.HoldoutPercent)
 	var train, holdout []datasetExample
 	for _, example := range sorted {
-		if len(sorted) >= 5 && datasetHoldout(example.ID, options.HoldoutPercent) {
+		if holdoutGroups[example.GroupID] {
 			holdout = append(holdout, example)
 		} else {
 			train = append(train, example)
@@ -203,6 +207,8 @@ func buildDataset(options datasetOptions) (datasetManifest, error) {
 	}
 	manifest.TrainExamples = len(train)
 	manifest.HoldoutExamples = len(holdout)
+	manifest.HoldoutGroups = len(holdoutGroups)
+	manifest.TrainGroups = countDatasetGroups(sorted) - manifest.HoldoutGroups
 	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
 		return datasetManifest{}, err
 	}
@@ -331,6 +337,7 @@ func datasetExampleFromTrace(trace trainingTrace) (datasetExample, bool, error) 
 	return datasetExample{
 		SchemaVersion: datasetSchemaVersion,
 		ID:            id,
+		GroupID:       evalContentHash(string(userRaw)),
 		SourceModel:   trace.Model,
 		SourceJobID:   trace.JobID,
 		Messages: []datasetMessage{
@@ -418,15 +425,42 @@ func detectDatasetSecret(content string) string {
 	return ""
 }
 
-func datasetHoldout(id string, percent int) bool {
-	if percent <= 0 || len(id) < 2 {
-		return false
+func selectDatasetHoldoutGroups(
+	examples []datasetExample,
+	percent int,
+) map[string]bool {
+	selected := make(map[string]bool)
+	if len(examples) < 5 || percent <= 0 {
+		return selected
 	}
-	var firstByte int
-	if _, err := fmt.Sscanf(id[:2], "%02x", &firstByte); err != nil {
-		return false
+	unique := make(map[string]bool)
+	var groups []string
+	for _, example := range examples {
+		if example.GroupID == "" || unique[example.GroupID] {
+			continue
+		}
+		unique[example.GroupID] = true
+		groups = append(groups, example.GroupID)
 	}
-	return firstByte < percent*256/100
+	sort.Strings(groups)
+	count := (len(groups)*percent + 99) / 100
+	if count > len(groups) {
+		count = len(groups)
+	}
+	for _, group := range groups[:count] {
+		selected[group] = true
+	}
+	return selected
+}
+
+func countDatasetGroups(examples []datasetExample) int {
+	groups := make(map[string]bool)
+	for _, example := range examples {
+		if example.GroupID != "" {
+			groups[example.GroupID] = true
+		}
+	}
+	return len(groups)
 }
 
 func writeDatasetJSONL(path string, examples []datasetExample) error {

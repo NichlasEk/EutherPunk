@@ -269,13 +269,14 @@ repository.
 ### Frozen local-model evaluation
 
 The repository contains immutable versioned suites. V1 is the original
-three-case Go baseline; V2 adds JavaScript, Lua, Rust and a two-file Go repair.
-Run the current multilang suite from a clean output path:
+three-case Go baseline; V2 adds JavaScript, Lua, Rust and a two-file Go repair;
+V3 adds twenty distinct dependency-free repair problems across the four
+languages. Run the current diverse suite from a clean output path:
 
 ```bash
 eutherpunk eval run \
-  --suite evaluation/v2/suite.json \
-  --output training/outputs/devstral-multilang-v2
+  --suite evaluation/v3/suite.json \
+  --output training/outputs/devstral-diverse-v3
 ```
 
 Use `--case go-compiler-repair` for one case. Every case gets an isolated
@@ -320,7 +321,9 @@ duplicate transitions and writes private
 `train.jsonl`, `holdout.jsonl` and `manifest.json` files.
 
 Small pilots with fewer than five examples remain entirely in `train.jsonl`;
-larger datasets use a deterministic ID-based holdout split. Every manifest sets
+larger datasets use an exact deterministic split by input problem group. All
+alternative valid targets for one task/initial-state pair stay together, so no
+problem leaks between train and holdout. Every manifest sets
 `training_authorized` to false and requires manual license and secret review.
 Building a dataset is evidence preparation, not permission to train or upload
 its source.

@@ -277,4 +277,12 @@ func TestLoadFrozenEvalSuite(t *testing.T) {
 	if multilang.Name != "eutherpunk-repair-multilang" || len(multilang.Cases) != 7 {
 		t.Fatalf("multilang suite = %#v", multilang)
 	}
+
+	diverse, err := loadEvalSuite(filepath.Join("..", "..", "evaluation", "v3", "suite.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diverse.Name != "eutherpunk-repair-diverse" || len(diverse.Cases) != 20 {
+		t.Fatalf("diverse suite = %#v", diverse)
+	}
 }

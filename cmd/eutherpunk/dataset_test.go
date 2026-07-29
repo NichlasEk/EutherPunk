@@ -51,6 +51,7 @@ func TestBuildDatasetExportsVerifiedRepairAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(example.Messages) != 3 ||
+		example.GroupID == "" ||
 		!strings.Contains(example.Messages[1].Content, "go test failed") ||
 		!strings.Contains(example.Messages[2].Content, "return 42") {
 		t.Fatalf("example = %#v", example)
@@ -127,6 +128,43 @@ func TestDatasetUsesVerifiedFailingInitialFilesForDirectSuccess(t *testing.T) {
 	}
 	if !usable || !strings.Contains(example.Messages[1].Content, "return 0") {
 		t.Fatalf("example = %#v, usable = %t", example, usable)
+	}
+}
+
+func TestDatasetSplitGroupsEquivalentRepairTargetsTogether(t *testing.T) {
+	first := datasetTestTrace("return 0", "return 42")
+	second := datasetTestTrace("return 0", "return 40 + 2")
+	firstExample, firstOK, err := datasetExampleFromTrace(first)
+	if err != nil || !firstOK {
+		t.Fatalf("first example: %v, %t", err, firstOK)
+	}
+	secondExample, secondOK, err := datasetExampleFromTrace(second)
+	if err != nil || !secondOK {
+		t.Fatalf("second example: %v, %t", err, secondOK)
+	}
+	if firstExample.ID == secondExample.ID {
+		t.Fatal("different targets received the same example ID")
+	}
+	if firstExample.GroupID != secondExample.GroupID {
+		t.Fatalf("equivalent inputs split into groups %q and %q", firstExample.GroupID, secondExample.GroupID)
+	}
+}
+
+func TestDatasetHoldoutSelectsExactGroupsWithoutLeakage(t *testing.T) {
+	examples := []datasetExample{
+		{ID: "a1", GroupID: "a"},
+		{ID: "a2", GroupID: "a"},
+		{ID: "b", GroupID: "b"},
+		{ID: "c", GroupID: "c"},
+		{ID: "d", GroupID: "d"},
+		{ID: "e", GroupID: "e"},
+	}
+	holdout := selectDatasetHoldoutGroups(examples, 20)
+	if len(holdout) != 1 || !holdout["a"] {
+		t.Fatalf("holdout = %#v", holdout)
+	}
+	if holdout[examples[2].GroupID] {
+		t.Fatal("unselected group leaked into holdout")
 	}
 }
 

@@ -1,0 +1,472 @@
+{
+  "schema_version": 1,
+  "name": "eutherpunk-repair-diverse",
+  "version": "3.0.0",
+  "cases": [
+    {
+      "id": "go-v3-parse-flag",
+      "task": "Repair ParseFlag so it trims and accepts true/false, yes/no and 1/0 case-insensitively, returning an error for anything else. Do not change tests or go.mod.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/go-v3-parse-flag\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.go",
+          "content": "package repair\n\nimport \"errors\"\n\nfunc ParseFlag(text string) (bool, error) {\n\treturn false, errors.New(\"not implemented\")\n}\n"
+        },
+        {
+          "path": "repair_test.go",
+          "content": "package repair\n\nimport \"testing\"\n\nfunc TestParseFlag(t *testing.T) {\n\tfor input, want := range map[string]bool{\" TRUE \": true, \"yes\": true, \"1\": true, \"False\": false, \"NO\": false, \"0\": false} {\n\t\tgot, err := ParseFlag(input)\n\t\tif err != nil || got != want { t.Fatalf(\"ParseFlag(%q) = %v, %v\", input, got, err) }\n\t}\n\tif _, err := ParseFlag(\"perhaps\"); err == nil { t.Fatal(\"invalid flag accepted\") }\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "go",
+        "test",
+        "./..."
+      ]
+    },
+    {
+      "id": "go-v3-moving-average",
+      "task": "Repair MovingAverage so it returns each full sliding-window average and rejects widths below 1 or above the input length with an error. Preserve tests.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/go-v3-moving-average\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.go",
+          "content": "package repair\n\nimport \"errors\"\n\nfunc MovingAverage(values []float64, width int) ([]float64, error) {\n\treturn nil, errors.New(\"TODO\")\n}\n"
+        },
+        {
+          "path": "repair_test.go",
+          "content": "package repair\n\nimport \"testing\"\n\nfunc TestMovingAverage(t *testing.T) {\n\tgot, err := MovingAverage([]float64{2, 4, 8, 10}, 2)\n\tif err != nil || len(got) != 3 || got[0] != 3 || got[1] != 6 || got[2] != 9 { t.Fatalf(\"got %#v, %v\", got, err) }\n\tfor _, width := range []int{0, 5} { if _, err := MovingAverage([]float64{1, 2}, width); err == nil { t.Fatalf(\"width %d accepted\", width) } }\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "go",
+        "test",
+        "./..."
+      ]
+    },
+    {
+      "id": "go-v3-stable-unique",
+      "task": "Repair StableUnique so it removes duplicate integers while preserving first-occurrence order and does not mutate the input. Do not change tests.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/go-v3-stable-unique\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.go",
+          "content": "package repair\n\nfunc StableUnique(values []int) []int {\n\treturn values\n}\n"
+        },
+        {
+          "path": "repair_test.go",
+          "content": "package repair\n\nimport \"testing\"\n\nfunc TestStableUnique(t *testing.T) {\n\tinput := []int{3, 1, 3, 2, 1, 4}\n\tgot := StableUnique(input)\n\twant := []int{3, 1, 2, 4}\n\tif len(got) != len(want) { t.Fatalf(\"got %#v\", got) }\n\tfor i := range want { if got[i] != want[i] { t.Fatalf(\"got %#v\", got) } }\n\tif input[2] != 3 { t.Fatal(\"input mutated\") }\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "go",
+        "test",
+        "./..."
+      ]
+    },
+    {
+      "id": "go-v3-parse-endpoint",
+      "task": "Repair ParseEndpoint so it accepts host:port, trims the host, and rejects missing hosts, invalid ports, zero and ports above 65535. Preserve tests.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/go-v3-parse-endpoint\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.go",
+          "content": "package repair\n\nimport \"strings\"\n\nfunc ParseEndpoint(text string) (string, int, error) {\n\tparts := strings.Split(text, \":\")\n\treturn parts[0], 0, nil\n}\n"
+        },
+        {
+          "path": "repair_test.go",
+          "content": "package repair\n\nimport \"testing\"\n\nfunc TestParseEndpoint(t *testing.T) {\n\thost, port, err := ParseEndpoint(\" example.test :8080\")\n\tif err != nil || host != \"example.test\" || port != 8080 { t.Fatalf(\"%q %d %v\", host, port, err) }\n\tfor _, input := range []string{\"\", \":80\", \"host:no\", \"host:0\", \"host:65536\"} {\n\t\tif _, _, err := ParseEndpoint(input); err == nil { t.Fatalf(\"%q accepted\", input) }\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "go",
+        "test",
+        "./..."
+      ]
+    },
+    {
+      "id": "go-v3-ledger-balance",
+      "task": "Repair Balance so deposits add, withdrawals subtract, unknown operation kinds return an error, and the input is not changed. Do not modify tests.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/go-v3-ledger-balance\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.go",
+          "content": "package repair\n\nimport \"errors\"\n\ntype Entry struct { Kind string; Amount int }\n\nfunc Balance(entries []Entry) (int, error) {\n\treturn 0, errors.New(\"unfinished\")\n}\n"
+        },
+        {
+          "path": "repair_test.go",
+          "content": "package repair\n\nimport \"testing\"\n\nfunc TestBalance(t *testing.T) {\n\tentries := []Entry{{\"deposit\", 100}, {\"withdraw\", 35}, {\"deposit\", 7}}\n\tgot, err := Balance(entries)\n\tif err != nil || got != 72 { t.Fatalf(\"%d %v\", got, err) }\n\tif entries[0].Amount != 100 { t.Fatal(\"input mutated\") }\n\tif _, err := Balance([]Entry{{\"mystery\", 1}}); err == nil { t.Fatal(\"unknown kind accepted\") }\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "go",
+        "test",
+        "./..."
+      ]
+    },
+    {
+      "id": "javascript-v3-chunk",
+      "task": "Repair the exported repair function to split an array into non-mutating chunks of a positive size and throw for invalid sizes. Preserve tests and package metadata.",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.js",
+          "content": "export function repair(values, size) {\n  return [values];\n}\n"
+        },
+        {
+          "path": "repair.test.js",
+          "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { repair } from './repair.js';\n\ntest('chunks without mutation', () =\u003e {\n  const input = [1, 2, 3, 4, 5];\n  assert.deepEqual(repair(input, 2), [[1, 2], [3, 4], [5]]);\n  assert.deepEqual(input, [1, 2, 3, 4, 5]);\n});\ntest('rejects invalid size', () =\u003e assert.throws(() =\u003e repair([1], 0), /size/i));\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "node",
+        "--test"
+      ]
+    },
+    {
+      "id": "javascript-v3-range",
+      "task": "Repair the exported repair(start,end,step) function to produce an inclusive ascending or descending numeric range and reject zero or directionally invalid steps. Do not change tests.",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.js",
+          "content": "export function repair(start, end, step = 1) {\n  return [];\n}\n"
+        },
+        {
+          "path": "repair.test.js",
+          "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { repair } from './repair.js';\n\ntest('ascending and descending ranges', () =\u003e {\n  assert.deepEqual(repair(1, 5, 2), [1, 3, 5]);\n  assert.deepEqual(repair(5, 1, -2), [5, 3, 1]);\n});\ntest('rejects bad steps', () =\u003e {\n  assert.throws(() =\u003e repair(1, 5, 0), /step/i);\n  assert.throws(() =\u003e repair(1, 5, -1), /direction/i);\n});\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "node",
+        "--test"
+      ]
+    },
+    {
+      "id": "javascript-v3-frequency",
+      "task": "Repair the exported repair function to return an object counting trimmed lowercase non-empty words without mutating its input. Preserve tests.",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.js",
+          "content": "export function repair(words) {\n  return {};\n}\n"
+        },
+        {
+          "path": "repair.test.js",
+          "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { repair } from './repair.js';\n\ntest('normalizes and counts', () =\u003e {\n  const input = [' Punk ', 'SCOUT', '', 'punk', ' scout '];\n  assert.deepEqual(repair(input), { punk: 2, scout: 2 });\n  assert.equal(input[0], ' Punk ');\n});\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "node",
+        "--test"
+      ]
+    },
+    {
+      "id": "javascript-v3-clamp-all",
+      "task": "Repair the exported repair function to return a new array with every numeric value clamped inclusively between minimum and maximum, rejecting reversed bounds. Do not modify tests.",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.js",
+          "content": "export function repair(values, minimum, maximum) {\n  return values;\n}\n"
+        },
+        {
+          "path": "repair.test.js",
+          "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { repair } from './repair.js';\n\ntest('clamps into a new array', () =\u003e {\n  const input = [-2, 3, 14];\n  assert.deepEqual(repair(input, 0, 10), [0, 3, 10]);\n  assert.deepEqual(input, [-2, 3, 14]);\n});\ntest('rejects reversed bounds', () =\u003e assert.throws(() =\u003e repair([], 2, 1), /bound/i));\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "node",
+        "--test"
+      ]
+    },
+    {
+      "id": "javascript-v3-csv-line",
+      "task": "Repair the exported repair function to parse one CSV line with commas inside double-quoted fields and doubled quote escapes. Do not change tests.",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+          "preserve": true
+        },
+        {
+          "path": "repair.js",
+          "content": "export function repair(line) {\n  return line.split(',');\n}\n"
+        },
+        {
+          "path": "repair.test.js",
+          "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { repair } from './repair.js';\n\ntest('parses quoted CSV fields', () =\u003e {\n  assert.deepEqual(repair('alpha,\\\"beta,gamma\\\",\\\"say \\\"\\\"hi\\\"\\\"\\\"'), ['alpha', 'beta,gamma', 'say \\\"hi\\\"']);\n  assert.deepEqual(repair('a,b,'), ['a', 'b', '']);\n});\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "node",
+        "--test"
+      ]
+    },
+    {
+      "id": "lua-v3-stack",
+      "task": "Repair the module as a LIFO stack with new, push, pop and size; empty pop returns nil. Do not change the test.",
+      "files": [
+        {
+          "path": "repair.lua",
+          "content": "local M = {}\nfunction M.new() return {items = {}} end\nfunction M.push(s, value) table.insert(s.items, value) end\nfunction M.pop(s) return table.remove(s.items, 1) end\nfunction M.size(s) return #s.items end\nreturn M\n"
+        },
+        {
+          "path": "test.lua",
+          "content": "local repair = require('repair')\n\nlocal s = repair.new()\nrepair.push(s, 'a'); repair.push(s, 'b'); repair.push(s, 'c')\nassert(repair.size(s) == 3)\nassert(repair.pop(s) == 'c'); assert(repair.pop(s) == 'b'); assert(repair.pop(s) == 'a')\nassert(repair.pop(s) == nil and repair.size(s) == 0)\n\nprint('lua repair ok')\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "lua",
+        "test.lua"
+      ]
+    },
+    {
+      "id": "lua-v3-words",
+      "task": "Repair normalize so it trims, lowercases and removes empty strings while preserving order and leaving input unchanged. Preserve the test.",
+      "files": [
+        {
+          "path": "repair.lua",
+          "content": "local M = {}\nfunction M.normalize(values) return values end\nreturn M\n"
+        },
+        {
+          "path": "test.lua",
+          "content": "local repair = require('repair')\n\nlocal input = {' Punk ', '', 'SCOUT', '  Go  '}\nlocal got = repair.normalize(input)\nassert(#got == 3 and got[1] == 'punk' and got[2] == 'scout' and got[3] == 'go')\nassert(input[1] == ' Punk ')\n\nprint('lua repair ok')\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "lua",
+        "test.lua"
+      ]
+    },
+    {
+      "id": "lua-v3-set-union",
+      "task": "Repair union so it returns sorted unique values from both arrays without mutating either input. Do not change the test.",
+      "files": [
+        {
+          "path": "repair.lua",
+          "content": "local M = {}\nfunction M.union(left, right) return left end\nreturn M\n"
+        },
+        {
+          "path": "test.lua",
+          "content": "local repair = require('repair')\n\nlocal a, b = {3, 1, 3}, {2, 1, 4}\nlocal got = repair.union(a, b)\nassert(#got == 4 and got[1] == 1 and got[2] == 2 and got[3] == 3 and got[4] == 4)\nassert(#a == 3 and #b == 3)\n\nprint('lua repair ok')\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "lua",
+        "test.lua"
+      ]
+    },
+    {
+      "id": "lua-v3-rotate",
+      "task": "Repair rotate_left so it returns a new array rotated by any non-negative distance, including distances larger than the array; preserve empty arrays and input. Do not modify tests.",
+      "files": [
+        {
+          "path": "repair.lua",
+          "content": "local M = {}\nfunction M.rotate_left(values, distance) return values end\nreturn M\n"
+        },
+        {
+          "path": "test.lua",
+          "content": "local repair = require('repair')\n\nlocal input = {1, 2, 3, 4}\nlocal got = repair.rotate_left(input, 6)\nassert(#got == 4 and got[1] == 3 and got[2] == 4 and got[3] == 1 and got[4] == 2)\nassert(input[1] == 1)\nassert(#repair.rotate_left({}, 3) == 0)\n\nprint('lua repair ok')\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "lua",
+        "test.lua"
+      ]
+    },
+    {
+      "id": "lua-v3-ledger",
+      "task": "Repair balance so deposit entries add, withdrawal entries subtract, and unknown kinds return nil plus an error message. Preserve the test.",
+      "files": [
+        {
+          "path": "repair.lua",
+          "content": "local M = {}\nfunction M.balance(entries) return 0 end\nreturn M\n"
+        },
+        {
+          "path": "test.lua",
+          "content": "local repair = require('repair')\n\nlocal got, err = repair.balance({{kind='deposit', amount=50}, {kind='withdraw', amount=8}, {kind='deposit', amount=2}})\nassert(got == 44 and err == nil)\nlocal bad, message = repair.balance({{kind='other', amount=1}})\nassert(bad == nil and type(message) == 'string')\n\nprint('lua repair ok')\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "lua",
+        "test.lua"
+      ]
+    },
+    {
+      "id": "rust-v3-rotate-left",
+      "task": "Repair the Rust repair(values,distance) function to return a new vector rotated left by distance modulo length, handling empty input. Preserve tests.",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "content": "[package]\nname = \"eutherpunk_v3_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+          "preserve": true
+        },
+        {
+          "path": "src/lib.rs",
+          "content": "pub fn repair(values: Vec\u003ci32\u003e, _distance: usize) -\u003e Vec\u003ci32\u003e {\n    values\n}\n"
+        },
+        {
+          "path": "tests/repair.rs",
+          "content": "use eutherpunk_v3_repair::repair;\n\n#[test]\nfn rotates_and_handles_empty() {\n    assert_eq!(repair(vec![1, 2, 3, 4], 6), vec![3, 4, 1, 2]);\n    assert_eq!(repair(vec![], 3), Vec::\u003ci32\u003e::new());\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "cargo",
+        "test",
+        "--quiet"
+      ]
+    },
+    {
+      "id": "rust-v3-parse-numbers",
+      "task": "Repair the Rust repair function to parse comma-separated i32 values with whitespace, reject empty fields and propagate invalid-number errors. Do not modify tests.",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "content": "[package]\nname = \"eutherpunk_v3_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+          "preserve": true
+        },
+        {
+          "path": "src/lib.rs",
+          "content": "pub fn repair(_text: \u0026str) -\u003e Result\u003cVec\u003ci32\u003e, String\u003e {\n    Ok(Vec::new())\n}\n"
+        },
+        {
+          "path": "tests/repair.rs",
+          "content": "use eutherpunk_v3_repair::repair;\n\n#[test]\nfn parses_and_rejects_invalid_fields() {\n    assert_eq!(repair(\" 1, -2,30 \").unwrap(), vec![1, -2, 30]);\n    assert!(repair(\"1,,2\").is_err());\n    assert!(repair(\"one\").is_err());\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "cargo",
+        "test",
+        "--quiet"
+      ]
+    },
+    {
+      "id": "rust-v3-frequency",
+      "task": "Repair the Rust repair function to return lowercase trimmed non-empty word counts as a sorted vector of pairs. Preserve tests.",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "content": "[package]\nname = \"eutherpunk_v3_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+          "preserve": true
+        },
+        {
+          "path": "src/lib.rs",
+          "content": "pub fn repair(_words: \u0026[\u0026str]) -\u003e Vec\u003c(String, usize)\u003e {\n    Vec::new()\n}\n"
+        },
+        {
+          "path": "tests/repair.rs",
+          "content": "use eutherpunk_v3_repair::repair;\n\n#[test]\nfn normalizes_counts_and_sorts() {\n    assert_eq!(repair(\u0026[\" Punk \", \"SCOUT\", \"\", \"punk\", \" scout \"]), vec![(\"punk\".into(), 2), (\"scout\".into(), 2)]);\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "cargo",
+        "test",
+        "--quiet"
+      ]
+    },
+    {
+      "id": "rust-v3-clamp-all",
+      "task": "Repair the Rust repair function to return all values clamped to inclusive bounds and return an error for reversed bounds. Do not change tests.",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "content": "[package]\nname = \"eutherpunk_v3_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+          "preserve": true
+        },
+        {
+          "path": "src/lib.rs",
+          "content": "pub fn repair(values: \u0026[i32], _minimum: i32, _maximum: i32) -\u003e Result\u003cVec\u003ci32\u003e, String\u003e {\n    Ok(values.to_vec())\n}\n"
+        },
+        {
+          "path": "tests/repair.rs",
+          "content": "use eutherpunk_v3_repair::repair;\n\n#[test]\nfn clamps_and_rejects_bounds() {\n    let input = vec![-2, 3, 14];\n    assert_eq!(repair(\u0026input, 0, 10).unwrap(), vec![0, 3, 10]);\n    assert_eq!(input, vec![-2, 3, 14]);\n    assert!(repair(\u0026[], 2, 1).is_err());\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "cargo",
+        "test",
+        "--quiet"
+      ]
+    },
+    {
+      "id": "rust-v3-batches",
+      "task": "Repair the Rust repair function to split a slice into owned batches of positive size, keeping the final partial batch and rejecting size zero. Preserve tests.",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "content": "[package]\nname = \"eutherpunk_v3_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+          "preserve": true
+        },
+        {
+          "path": "src/lib.rs",
+          "content": "pub fn repair(values: \u0026[i32], _size: usize) -\u003e Result\u003cVec\u003cVec\u003ci32\u003e\u003e, String\u003e {\n    Ok(vec![values.to_vec()])\n}\n"
+        },
+        {
+          "path": "tests/repair.rs",
+          "content": "use eutherpunk_v3_repair::repair;\n\n#[test]\nfn creates_batches_and_rejects_zero() {\n    assert_eq!(repair(\u0026[1, 2, 3, 4, 5], 2).unwrap(), vec![vec![1, 2], vec![3, 4], vec![5]]);\n    assert!(repair(\u0026[1], 0).is_err());\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": [
+        "cargo",
+        "test",
+        "--quiet"
+      ]
+    }
+  ]
+}

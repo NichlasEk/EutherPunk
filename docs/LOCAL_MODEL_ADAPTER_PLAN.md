@@ -240,3 +240,40 @@ The rejected slug trace remains useful negative/preference evidence but is not
 included in supervised targets. The corpus is now structurally trainable, but
 ten transitions still do not justify an adapter run; the next milestone remains
 at least 30 diverse repairs.
+
+## Diverse v3 and the 30-transition milestone
+
+The immutable `evaluation/v3/suite.json` contains twenty new dependency-free
+repairs: five each for Go, JavaScript, Lua and Rust. Every seed was executed
+before model access and confirmed failing. Suite SHA-256:
+
+```text
+8cf02649985ed37b10bf210ee76c487ffee0a20e14f96cffaef57a2891ffa529
+```
+
+The first run used harness `5406758` and `devstral-small-2:24b`:
+
+- accepted by executable verifier: 19/20;
+- protected-file preservation: 20/20;
+- harness completion: 16/20;
+- mean wall time: 16.124 seconds.
+
+The JavaScript range case was the sole executable rejection. Six model drafts
+repeated the same signed-step error. A parent correction changed the loop from
+subtracting an already negative step to adding the signed step, after which
+`node --test` passed. That accepted parent-verified trace became transition 30.
+
+The final private corpus inspected 156 JSON artifacts and contains:
+
+- repair transitions: 30;
+- train examples and groups: 24;
+- holdout examples and groups: 6;
+- duplicate transitions: 0;
+- train/holdout group overlap: 0.
+
+Holdout selection is exact and deterministic by a hash of task, diagnostics and
+source files. Multiple valid targets for one identical repair input therefore
+cannot leak across the split. Automated structure and strong-secret/license
+marker scans passed, but the manifest still has
+`manual_license_and_secret_review_required: true` and
+`training_authorized: false`.
