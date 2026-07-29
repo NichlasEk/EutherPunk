@@ -150,6 +150,37 @@ func workspaceRequestHasProperty(request ollamaChatRequest, property string) boo
 	return ok
 }
 
+func TestWorkspaceJobAllowsExplicitlyDisabledLocalAuth(t *testing.T) {
+	workspaceJobsMu.Lock()
+	workspaceJobs = map[string]*workspaceJob{}
+	workspaceJobsMu.Unlock()
+
+	body := `{"messages":[{"role":"user","content":"skapa"}],"local_workspace":true}`
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/eutherpunk/workspace/jobs",
+		strings.NewReader(body),
+	)
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authPrincipal{
+		User:     "local",
+		Scopes:   []string{"eutherpunk:*"},
+		AuthMode: "disabled",
+	}))
+	rec := httptest.NewRecorder()
+
+	handleWorkspaceJobStart(serverConfig{
+		ollamaURL:      "http://127.0.0.1:1",
+		model:          "chat-model",
+		workspaceModel: "coder-model",
+		settingsDir:    t.TempDir(),
+		promptsPath:    t.TempDir() + "/prompts.toml",
+	})(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("start status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestWorkspaceJobRepairsRejectedProposal(t *testing.T) {
 	var generationCalls, reviewCalls int
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

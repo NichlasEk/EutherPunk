@@ -277,3 +277,110 @@ cannot leak across the split. Automated structure and strong-secret/license
 marker scans passed, but the manifest still has
 `manual_license_and_secret_review_required: true` and
 `training_authorized: false`.
+
+## QLoRA pilot
+
+The workstation contains an RTX 4090 with 24 GB VRAM. The public EutherPunk
+server is only the gateway; it has no training GPU. The pilot therefore runs
+privately on the workstation and leaves the Ollama model and reverse tunnel
+untouched.
+
+Before training, bind a manual decision to the exact private dataset bytes:
+
+```bash
+python training_tools/audit_dataset.py \
+  training/outputs/repair-dataset-diverse-v3-final \
+  --authorize \
+  --reviewer "<reviewer>"
+```
+
+The resulting ignored `authorization.json` records SHA-256 values for train,
+holdout and the original manifest. The trainer refuses altered data, missing
+authorization, train/holdout group overlap, an existing output directory or
+missing CUDA.
+
+Run the isolated pilot with:
+
+```bash
+scripts/train-adapter-pilot.sh
+```
+
+The fixed initial recipe is NF4 QLoRA, rank 8, BF16 compute, sequence length
+1536, batch size 1, four-step gradient accumulation and three epochs. Only the
+24 training examples receive gradient updates. The six holdout examples are
+used for evaluation loss and remain available for the executable A/B suite.
+The official Apache-2.0 Devstral Small 2 weights are cached below the ignored
+`.training-runtime/` directory; no dataset or adapter is uploaded.
+
+Devstral Small 2's official checkpoint is mixed BF16/FP8 and declares an FP8
+inference quantizer. The pilot pins revision
+`55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128`, removes only that declaration
+from the in-memory model configuration, and streams the unchanged published
+checkpoint tensors into bitsandbytes NF4 modules. This avoids trying to stack
+two incompatible runtime quantizers and keeps the downloaded source immutable.
+
+The stream conversion must consume each layer's `weight_scale_inv`; casting
+raw FP8 values directly to NF4 produces a loadable but numerically invalid
+model. The training loader therefore composes Transformers' own
+`Fp8Dequantize` conversion with its bitsandbytes conversion:
+
+```text
+FP8 weight + inverse scale -> dequantized layer -> NF4 layer
+```
+
+The conversion is scoped to model loading and restored immediately afterward.
+A load report containing unused `weight_scale_inv` keys is treated as a failed
+pilot and must not reach a gradient step.
+
+## First QLoRA result
+
+The private pilot completed on 2026-07-29. The run used 24 training transitions,
+six isolated holdout transitions and the pinned base revision above. It reached:
+
+- train loss: `0.8356`;
+- best holdout loss: `0.9230`, selected after epoch 1;
+- peak allocated CUDA memory: 22,356,557,824 bytes;
+- training runtime: 157.5 seconds.
+
+The original 2048-token recipe exceeded the RTX 4090 during backpropagation.
+At 1536 tokens, 25 of 30 examples fit in full. Completion-safe preprocessing
+preserves supervised repair output by shortening oversized prompts from both
+the head and tail. Five prompts were shortened and the completion of one
+exceptional full-file scanner repair was shortened. The exact counts are
+recorded in the private run manifest.
+
+The adapter is packaged privately as a separate Ollama model:
+
+```text
+eutherpunk-devstral-repair:pilot-m3
+```
+
+Ollama's Devstral package uses the `mistral3` GGUF architecture tag, while
+llama.cpp's generic Mistral3 LoRA converter currently emits `llama`. The
+versioned `convert_devstral_lora_gguf.py` wrapper retains llama.cpp's tensor
+mapping but changes that metadata tag to `mistral3`. The unmodified base model
+remains available as rollback.
+
+The six true holdout cases were resolved back to the frozen v2/v3 suites and
+run through the executable EutherPunk harness:
+
+| Metric | Base | Adapter |
+| --- | ---: | ---: |
+| Executable verifier | 5/6 | 6/6 |
+| Protected-file preservation | 6/6 | 6/6 |
+| Worker completion | 6/6 | 5/6 |
+| Mean duration | 22.19 s | 15.66 s |
+
+The adapter fixed the held-out JavaScript signed-range failure and reduced mean
+duration by about 29 percent. Its internal reviewer nevertheless withheld that
+now-correct range proposal after inventing non-verifier requirements. Across
+the full v3 suite the adapter reached 20/20 executable passes and 20/20
+preservation, compared with the base model's 19/20 and 20/20, but worker
+completion declined from 16/20 to 15/20. Because most v3 cases contributed
+training transitions, that full-suite number is a regression check rather than
+generalization evidence.
+
+The pilot is therefore retained but is not the default model. The next
+acceptance gate is reviewer calibration: preserve the 6/6 holdout executable
+result while recovering 6/6 worker completion. Private datasets, adapters,
+GGUF files and evaluation outputs remain ignored and must not be uploaded.

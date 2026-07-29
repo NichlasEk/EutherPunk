@@ -6,3 +6,6 @@ var/images/
 training/traces/
 training/outputs/
 training/models/
+.training-runtime/
+__pycache__/
+*.py[cod]

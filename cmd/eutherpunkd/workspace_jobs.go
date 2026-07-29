@@ -56,7 +56,7 @@ var (
 func handleWorkspaceJobStart(cfg serverConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := principalFromContext(r.Context())
-		if !ok || principal.AuthMode != "cli_token" {
+		if !ok || (principal.AuthMode != "cli_token" && principal.AuthMode != "disabled") {
 			writeError(w, http.StatusForbidden, errors.New("workspace jobs require CLI authentication"))
 			return
 		}

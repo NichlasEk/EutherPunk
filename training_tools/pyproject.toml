@@ -1,0 +1,17 @@
+[project]
+name = "eutherpunk-training"
+version = "0.1.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "accelerate>=1.10,<2",
+  "bitsandbytes>=0.47,<1",
+  "datasets>=4.0,<5",
+  "mistral-common>=1.8.6,<2",
+  "peft>=0.18,<0.20",
+  "torch>=2.8,<3",
+  "transformers>=5.0,<6",
+  "trl>=0.26,<0.30",
+]
+
+[tool.uv]
+package = false
