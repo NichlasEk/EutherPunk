@@ -266,13 +266,14 @@ repository.
 
 ### Frozen local-model evaluation
 
-The repository contains a small versioned core suite under
-`evaluation/v1/suite.json`. Run it from a clean output path:
+The repository contains immutable versioned suites. V1 is the original
+three-case Go baseline; V2 adds JavaScript, Lua, Rust and a two-file Go repair.
+Run the current multilang suite from a clean output path:
 
 ```bash
 eutherpunk eval run \
-  --suite evaluation/v1/suite.json \
-  --output training/outputs/devstral-baseline-v1
+  --suite evaluation/v2/suite.json \
+  --output training/outputs/devstral-multilang-v2
 ```
 
 Use `--case go-compiler-repair` for one case. Every case gets an isolated
@@ -289,8 +290,9 @@ instead of replacing the failed evidence.
 
 Evaluation suites are trusted developer inputs. Verifiers are invoked directly
 without a shell and are restricted to `go`, `node`, `cargo`, `lua` and `luac`.
-The bundled v1 suite currently uses only `go test ./...`. Results and traces
-remain private under ignored `training/` directories.
+The bundled suites use only dependency-free local projects. Results and traces
+remain private under ignored `training/` directories. Never edit a suite after
+recording a baseline; add a new version instead.
 
 The status response also contains a bounded activity log. The CLI shows real
 pipeline events such as context preparation, model generation volume, structured

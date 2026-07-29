@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "name": "eutherpunk-repair-multilang",
+  "version": "2.0.0",
+  "cases": [
+    {
+      "id": "go-compiler-repair",
+      "task": "Make `go test ./...` pass by implementing the missing production function. Do not change tests. Return complete files, with no placeholders.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/compilerrepair\n\ngo 1.22\n"
+        },
+        {
+          "path": "clamp.go",
+          "content": "package compilerrepair\n\nfunc Limit(value, minimum, maximum int) int {\n\treturn clamp(value, minimum, maximum)\n}\n"
+        },
+        {
+          "path": "clamp_test.go",
+          "content": "package compilerrepair\n\nimport \"testing\"\n\nfunc TestLimit(t *testing.T) {\n\tfor _, test := range []struct{ value, minimum, maximum, want int }{\n\t\t{-2, 0, 10, 0},\n\t\t{4, 0, 10, 4},\n\t\t{14, 0, 10, 10},\n\t} {\n\t\tif got := Limit(test.value, test.minimum, test.maximum); got != test.want {\n\t\t\tt.Fatalf(\"Limit(%d, %d, %d) = %d, want %d\", test.value, test.minimum, test.maximum, got, test.want)\n\t\t}\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    },
+    {
+      "id": "go-cross-file-api",
+      "task": "Repair the production API so `go test ./...` passes. Preserve the public function name and do not change tests or the module file.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/counter\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "counter.go",
+          "content": "package counter\n\nfunc Add(value int) int {\n\treturn value + 1\n}\n"
+        },
+        {
+          "path": "counter_test.go",
+          "content": "package counter\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif got := Add(19, 23); got != 42 {\n\t\tt.Fatalf(\"Add(19, 23) = %d, want 42\", got)\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    },
+    {
+      "id": "go-placeholder-removal",
+      "task": "Complete the production implementation so `go test ./...` passes. Remove the placeholder behavior, handle repeated separators, and do not modify tests.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/slug\n\ngo 1.22\n"
+        },
+        {
+          "path": "slug.go",
+          "content": "package slug\n\nfunc Make(input string) string {\n\t// TODO: implement\n\treturn \"\"\n}\n"
+        },
+        {
+          "path": "slug_test.go",
+          "content": "package slug\n\nimport \"testing\"\n\nfunc TestMake(t *testing.T) {\n\tfor input, want := range map[string]string{\n\t\t\"Hello World\": \"hello-world\",\n\t\t\"  Punk___Scout  \": \"punk-scout\",\n\t\t\"Already-clean\": \"already-clean\",\n\t} {\n\t\tif got := Make(input); got != want {\n\t\t\tt.Fatalf(\"Make(%q) = %q, want %q\", input, got, want)\n\t\t}\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    },
+    {
+      "id": "javascript-numeric-median",
+      "task": "Repair `median` so `node --test` passes. It must compute a numeric median without mutating its input and reject an empty array. Do not change tests or package metadata.",
+      "files": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"name\": \"eutherpunk-eval-median\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+          "preserve": true
+        },
+        {
+          "path": "median.js",
+          "content": "export function median(values) {\n  const sorted = values.sort();\n  return sorted[Math.floor(sorted.length / 2)];\n}\n"
+        },
+        {
+          "path": "median.test.js",
+          "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { median } from './median.js';\n\ntest('numeric odd and even medians', () => {\n  assert.equal(median([10, 2, 7]), 7);\n  assert.equal(median([9, 1, 5, 3]), 4);\n});\n\ntest('does not mutate input', () => {\n  const values = [3, 1, 2];\n  median(values);\n  assert.deepEqual(values, [3, 1, 2]);\n});\n\ntest('rejects empty input', () => {\n  assert.throws(() => median([]), /empty/i);\n});\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["node", "--test"]
+    },
+    {
+      "id": "lua-fifo-queue",
+      "task": "Repair the Lua module as a FIFO queue so `lua test.lua` passes. Keep the public functions `new`, `push`, `pop` and `size`; do not modify the test.",
+      "files": [
+        {
+          "path": "queue.lua",
+          "content": "local queue = {}\n\nfunction queue.new()\n  return { items = {} }\nend\n\nfunction queue.push(q, value)\n  q.items[#q.items] = value\nend\n\nfunction queue.pop(q)\n  return table.remove(q.items)\nend\n\nfunction queue.size(q)\n  return #q.items\nend\n\nreturn queue\n"
+        },
+        {
+          "path": "test.lua",
+          "content": "local queue = require('queue')\n\nlocal q = queue.new()\nassert(queue.size(q) == 0, 'new queue must be empty')\nqueue.push(q, 'alpha')\nqueue.push(q, 'beta')\nqueue.push(q, 'gamma')\nassert(queue.size(q) == 3, 'size after pushes')\nassert(queue.pop(q) == 'alpha', 'FIFO first item')\nassert(queue.pop(q) == 'beta', 'FIFO second item')\nassert(queue.pop(q) == 'gamma', 'FIFO third item')\nassert(queue.pop(q) == nil, 'empty pop')\nassert(queue.size(q) == 0, 'size after pops')\nprint('lua queue ok')\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["lua", "test.lua"]
+    },
+    {
+      "id": "rust-sort-dedup",
+      "task": "Repair the Rust library so `cargo test --quiet` passes. `unique_sorted` must return ascending unique values. Do not change Cargo.toml or tests.",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "content": "[package]\nname = \"eutherpunk_eval_dedup\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+          "preserve": true
+        },
+        {
+          "path": "src/lib.rs",
+          "content": "pub fn unique_sorted(values: Vec<i32>) -> Vec<i32> {\n    values\n}\n"
+        },
+        {
+          "path": "tests/dedup.rs",
+          "content": "use eutherpunk_eval_dedup::unique_sorted;\n\n#[test]\nfn sorts_and_removes_duplicates() {\n    assert_eq!(unique_sorted(vec![4, 2, 4, -1, 2, 9]), vec![-1, 2, 4, 9]);\n}\n\n#[test]\nfn handles_empty_and_singleton() {\n    assert_eq!(unique_sorted(vec![]), Vec::<i32>::new());\n    assert_eq!(unique_sorted(vec![7]), vec![7]);\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["cargo", "test", "--quiet"]
+    },
+    {
+      "id": "go-two-file-repair",
+      "task": "Repair both production files so all `go test ./...` checks pass. ParsePort must reject invalid and out-of-range ports. NormalizeTags must trim, lowercase, remove blanks and preserve the first occurrence order. Do not change tests or go.mod.",
+      "files": [
+        {
+          "path": "go.mod",
+          "content": "module eval.local/multirepair\n\ngo 1.22\n",
+          "preserve": true
+        },
+        {
+          "path": "port.go",
+          "content": "package multirepair\n\nimport \"strconv\"\n\nfunc ParsePort(text string) (int, error) {\n\tport, _ := strconv.Atoi(text)\n\treturn port, nil\n}\n"
+        },
+        {
+          "path": "tags.go",
+          "content": "package multirepair\n\nfunc NormalizeTags(values []string) []string {\n\tseen := map[string]bool{}\n\tresult := make([]string, 0, len(values))\n\tfor _, value := range values {\n\t\tif !seen[value] {\n\t\t\tseen[value] = true\n\t\t\tresult = append(result, value)\n\t\t}\n\t}\n\treturn result\n}\n"
+        },
+        {
+          "path": "repair_test.go",
+          "content": "package multirepair\n\nimport (\n\t\"reflect\"\n\t\"testing\"\n)\n\nfunc TestParsePort(t *testing.T) {\n\tif got, err := ParsePort(\"8080\"); err != nil || got != 8080 {\n\t\tt.Fatalf(\"ParsePort valid = %d, %v\", got, err)\n\t}\n\tfor _, input := range []string{\"nope\", \"0\", \"65536\", \"-3\"} {\n\t\tif _, err := ParsePort(input); err == nil {\n\t\t\tt.Fatalf(\"ParsePort(%q) accepted\", input)\n\t\t}\n\t}\n}\n\nfunc TestNormalizeTags(t *testing.T) {\n\tinput := []string{\" Punk \", \"\", \"SCOUT\", \"punk\", \"  scout  \", \"Go\"}\n\twant := []string{\"punk\", \"scout\", \"go\"}\n\tif got := NormalizeTags(input); !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf(\"NormalizeTags = %#v, want %#v\", got, want)\n\t}\n}\n",
+          "preserve": true
+        }
+      ],
+      "verifier": ["go", "test", "./..."]
+    }
+  ]
+}

@@ -283,7 +283,7 @@ func executeEvalCase(
 ) (result evalCaseResult) {
 	started := time.Now()
 	caseRoot := filepath.Join(outputRoot, test.ID)
-	workspaceRoot := filepath.Join(caseRoot, "workspace")
+	workspaceRoot := filepath.Join(caseRoot, "workspace-"+test.ID)
 	resultPath := filepath.Join(caseRoot, "worker.json")
 	diagnosticsPath := filepath.Join(caseRoot, "diagnostics.txt")
 	tracePath := filepath.Join(caseRoot, "trace.json")

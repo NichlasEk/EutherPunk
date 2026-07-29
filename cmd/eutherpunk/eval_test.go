@@ -117,6 +117,7 @@ func TestExecuteEvalSuiteVerifiesAndFinalizesTrace(t *testing.T) {
 		t.Fatal(err)
 	}
 	if trace.Verdict != "accepted" ||
+		trace.WorkspaceID != "workspace-answer" ||
 		len(trace.Drafts) != 1 ||
 		len(trace.CorrectedFiles) != 1 {
 		t.Fatalf("trace = %#v", trace)
@@ -267,5 +268,13 @@ func TestLoadFrozenEvalSuite(t *testing.T) {
 	}
 	if suite.Name != "eutherpunk-repair-core" || len(suite.Cases) != 3 {
 		t.Fatalf("suite = %#v", suite)
+	}
+
+	multilang, err := loadEvalSuite(filepath.Join("..", "..", "evaluation", "v2", "suite.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if multilang.Name != "eutherpunk-repair-multilang" || len(multilang.Cases) != 7 {
+		t.Fatalf("multilang suite = %#v", multilang)
 	}
 }

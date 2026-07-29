@@ -153,3 +153,27 @@ training trace.
 
 Future baselines must use a new named output directory and record the exact
 harness commit so results remain comparable.
+
+## Multilanguage v2 baseline
+
+The immutable `evaluation/v2/suite.json` retained the three v1 Go cases and
+added:
+
+- numeric JavaScript median behavior under `node --test`;
+- a Lua FIFO module under `lua test.lua`;
+- Rust sorting and deduplication under `cargo test --quiet`;
+- a two-production-file Go repair with protected tests and module metadata.
+
+The first v2 run used harness `4fe4a63`, suite SHA-256
+`189c15abcd0f9b2a305867e1cc35f428e9f8ee0aac67b184ff56ff8a833fe63b`
+and `devstral-small-2:24b`. Results:
+
+- executable pass rate: 7/7;
+- protected-file preservation: 7/7;
+- harness completion: 7/7;
+- mean wall time: 15.024 seconds;
+- external verifier repair rounds: one, for the slug case.
+
+The Lua case also exercised an internal reviewer-driven draft repair before its
+external verifier passed. All seven traces are private mode `0600` artifacts
+under the ignored training output tree.
