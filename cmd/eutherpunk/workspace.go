@@ -416,6 +416,10 @@ func waitWorkspaceJob(
 				_, _ = fmt.Fprintf(output, "Lokal kontroll stoppade förslaget: %v\r\n", err)
 				return "", fileProposal{}, err
 			}
+			if len(proposal.Files) == 0 {
+				_, _ = io.WriteString(output, "Kodjobbet avslutades utan filförslag.\r\n")
+				return message, proposal, nil
+			}
 			if validationErr := validateProposalSyntax(proposal); validationErr != nil {
 				_, _ = fmt.Fprintf(
 					output,

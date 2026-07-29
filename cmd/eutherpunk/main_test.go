@@ -164,6 +164,50 @@ func TestRequestWorkspaceAnswerUsesJobLifecycle(t *testing.T) {
 	}
 }
 
+func TestRequestWorkspaceAnswerReportsCompletedJobWithoutFiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{ID: "job-empty", Status: "running"})
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(workspaceJobResponse{
+				ID:      "job-empty",
+				Status:  "completed",
+				Message: "Inga filer föreslås eller ändras.",
+			})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	var output bytes.Buffer
+	message, proposal, err := requestWorkspaceAnswer(
+		context.Background(),
+		cliConfig{
+			apiURL: server.URL,
+			credentials: authCredentials{
+				AccessToken: "test-token",
+				ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+			},
+		},
+		[]chatMessage{{Role: "user", Content: "skapa"}},
+		"LOKAL KODARBETSYTA\n(tom arbetsyta)",
+		&output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message != "Inga filer föreslås eller ändras." || len(proposal.Files) != 0 {
+		t.Fatalf("message=%q proposal=%#v", message, proposal)
+	}
+	if !strings.Contains(output.String(), "avslutades utan filförslag") ||
+		strings.Contains(output.String(), "Lokal kontroll godkänd") {
+		t.Fatalf("output=%q", output.String())
+	}
+}
+
 func TestTrimHistoryKeepsNewestMessages(t *testing.T) {
 	messages := make([]chatMessage, 15)
 	for i := range messages {
