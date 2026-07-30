@@ -317,6 +317,15 @@ eutherpunk eval run \
   --output training/outputs/neon-life-creative-v1
 ```
 
+The iteration suite checks that a visual request edits an existing Tetris page
+without replacing its gameplay or shadow-piece logic:
+
+```bash
+eutherpunk eval run \
+  --suite evaluation/iteration-v1/suite.json \
+  --output training/outputs/iteration-v1
+```
+
 Use `--case go-compiler-repair` for one case. Every case gets an isolated
 workspace, the full worker result, bounded verifier diagnostics and an automatic
 accepted/rejected training trace. `summary.json` reports executable pass rate,

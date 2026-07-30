@@ -21,9 +21,6 @@ func TestAskWorkspaceOllamaPlansThenGeneratesFilesSeparately(t *testing.T) {
 		if request.Format == nil {
 			t.Fatal("workspace request did not include a JSON schema")
 		}
-		if request.Options["num_ctx"] != float64(12288) {
-			t.Fatalf("num_ctx = %#v", request.Options["num_ctx"])
-		}
 		if request.Think == nil || *request.Think {
 			t.Fatalf("workspace thinking must be disabled: %#v", request.Think)
 		}
@@ -31,7 +28,10 @@ func TestAskWorkspaceOllamaPlansThenGeneratesFilesSeparately(t *testing.T) {
 			t.Fatal("short structured workspace calls must not stream")
 		}
 		if workspaceRequestHasProperty(request, "content") {
-			if request.Options["num_predict"] != float64(6144) {
+			if request.Options["num_ctx"] != float64(32768) {
+				t.Fatalf("file num_ctx = %#v", request.Options["num_ctx"])
+			}
+			if request.Options["num_predict"] != float64(12288) {
 				t.Fatalf("file num_predict = %#v", request.Options["num_predict"])
 			}
 			if !strings.Contains(request.Messages[0].Content, "exakt en komplett fil") {
@@ -45,6 +45,9 @@ func TestAskWorkspaceOllamaPlansThenGeneratesFilesSeparately(t *testing.T) {
 				Done: true,
 			})
 			return
+		}
+		if request.Options["num_ctx"] != float64(12288) {
+			t.Fatalf("planner num_ctx = %#v", request.Options["num_ctx"])
 		}
 		if request.Options["num_predict"] != float64(768) {
 			t.Fatalf("planner num_predict = %#v", request.Options["num_predict"])

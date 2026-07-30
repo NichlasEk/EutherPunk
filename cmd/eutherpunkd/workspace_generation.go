@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -51,7 +53,7 @@ func askWorkspaceOllama(
 			fmt.Sprintf("Skapar %s separat (%d/%d).", planned.Path, index+1, len(plan.Files)),
 		)
 		content, err := generateWorkspaceFileOllama(
-			ctx, ollamaURL, model, system, messages, plan, planned,
+			ctx, ollamaURL, model, system, messages, plan, planned, progress,
 		)
 		if err != nil {
 			return "", nil, fmt.Errorf("skapa %s: %w", planned.Path, err)
@@ -182,6 +184,136 @@ func generateWorkspaceFileOllama(
 	messages []ollamaMessage,
 	plan workspacePlan,
 	file workspacePlanFile,
+	progress func(string),
+) (string, error) {
+	if existing, ok := workspaceSnapshotFile(messages, file.Path); ok {
+		reportWorkspaceProgress(
+			progress,
+			fmt.Sprintf("Redigerar befintliga %s med en liten precisionspatch.", file.Path),
+		)
+		edited, err := editWorkspaceFileOllama(
+			ctx, ollamaURL, model, system, messages, plan, file, existing,
+		)
+		if err == nil {
+			return edited, nil
+		}
+		reportWorkspaceProgress(
+			progress,
+			fmt.Sprintf("Precisionspatchen för %s kunde inte tillämpas; faller tillbaka till en komplett fil.", file.Path),
+		)
+	}
+	return generateCompleteWorkspaceFileOllama(
+		ctx, ollamaURL, model, system, messages, plan, file, progress,
+	)
+}
+
+type workspaceFileEdit struct {
+	Old string `json:"old"`
+	New string `json:"new"`
+}
+
+func editWorkspaceFileOllama(
+	ctx context.Context,
+	ollamaURL, model, system string,
+	messages []ollamaMessage,
+	plan workspacePlan,
+	file workspacePlanFile,
+	existing string,
+) (string, error) {
+	planJSON, err := json.Marshal(plan.Files)
+	if err != nil {
+		return "", err
+	}
+	editSystem := system + `
+
+Du redigerar en befintlig fungerande fil med en liten strukturerad patch.
+Returnera endast JSON enligt schemat med "edits". Varje "old" måste vara ett
+ordagrant, sammanhängande och unikt stycke ur den befintliga filen. "new" är
+ersättningen. Välj minsta möjliga stycken och bevara allt som uppgiften inte
+uttryckligen ändrar. Returnera aldrig hela filen, Markdown, resonemang eller
+ungefärliga matchningar.`
+	editPrompt := fmt.Sprintf(
+		"HELA FILPLANEN:\n%s\n\nREDIGERA ENDAST DEN BEFINTLIGA FILEN %q.\nKRAV:\n%s\n\nBEFINTLIG FIL:\n%s",
+		planJSON,
+		file.Path,
+		file.Instruction,
+		existing,
+	)
+	format := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"edits": map[string]any{
+				"type":     "array",
+				"minItems": 1,
+				"maxItems": 32,
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"old": map[string]any{"type": "string"},
+						"new": map[string]any{"type": "string"},
+					},
+					"required": []string{"old", "new"},
+				},
+			},
+		},
+		"required": []string{"edits"},
+	}
+	content, err := askWorkspaceStructuredTimeout(
+		ctx, ollamaURL, model, editSystem,
+		[]ollamaMessage{{Role: "user", Content: editPrompt}},
+		format, 4096, 3*time.Minute,
+	)
+	if err != nil {
+		return "", err
+	}
+	var patch struct {
+		Edits []workspaceFileEdit `json:"edits"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&patch); err != nil {
+		return "", fmt.Errorf("tolka precisionspatch: %w", err)
+	}
+	return applyWorkspaceFileEdits(existing, patch.Edits)
+}
+
+func applyWorkspaceFileEdits(existing string, edits []workspaceFileEdit) (string, error) {
+	if len(edits) == 0 || len(edits) > 32 {
+		return "", errors.New("precisionspatchen innehåller fel antal redigeringar")
+	}
+	edited := existing
+	for index, edit := range edits {
+		if edit.Old == "" {
+			return "", fmt.Errorf("precisionspatch %d har ett tomt sökstycke", index+1)
+		}
+		count := strings.Count(edited, edit.Old)
+		if count != 1 {
+			return "", fmt.Errorf(
+				"precisionspatch %d matchar %d gånger i stället för exakt en",
+				index+1,
+				count,
+			)
+		}
+		edited = strings.Replace(edited, edit.Old, edit.New, 1)
+	}
+	if edited == existing {
+		return "", errors.New("precisionspatchen ändrade inte filen")
+	}
+	if strings.TrimSpace(edited) == "" {
+		return "", errors.New("precisionspatchen tömde filen")
+	}
+	return edited, nil
+}
+
+func generateCompleteWorkspaceFileOllama(
+	ctx context.Context,
+	ollamaURL, model, system string,
+	messages []ollamaMessage,
+	plan workspacePlan,
+	file workspacePlanFile,
+	progress func(string),
 ) (string, error) {
 	planJSON, err := json.Marshal(plan.Files)
 	if err != nil {
@@ -194,9 +326,11 @@ endast JSON enligt schemat med fältet "content". Lägg aldrig koden i ett
 chattsvar eller Markdown-kodstaket. Filen måste vara den enda slutliga,
 sammanhängande versionen: inga TODO, placeholders, alternativa utkast eller
 självrättningar. Kontrollera att alla anropade funktioner och identifierare
-finns i filen eller målmiljöns standard-API.`
+finns i filen eller målmiljöns standard-API. Om filen redan finns i
+arbetsytesnapshoten ska den befintliga fungerande filen vara basen: bevara allt
+som uppgiften inte uttryckligen ändrar och börja aldrig om med en ny design.`
 	filePrompt := fmt.Sprintf(
-		"HELA FILPLANEN:\n%s\n\nSKAPA NU ENDAST FILEN %q.\nKRAV:\n%s",
+		"HELA FILPLANEN:\n%s\n\nSKAPA ELLER UPPDATERA NU ENDAST FILEN %q.\nKRAV:\n%s",
 		planJSON,
 		file.Path,
 		file.Instruction,
@@ -212,11 +346,52 @@ finns i filen eller målmiljöns standard-API.`
 	fileMessages := append([]ollamaMessage(nil), messages...)
 	fileMessages = append(fileMessages, ollamaMessage{Role: "user", Content: filePrompt})
 	content, err := askWorkspaceStructuredTimeout(
-		ctx, ollamaURL, model, fileSystem, fileMessages, format, 6144, 5*time.Minute,
+		ctx, ollamaURL, model, fileSystem, fileMessages, format, 12288, 5*time.Minute,
+	)
+	if err != nil {
+		if errors.Is(err, errWorkspaceOutputTruncated) {
+			reportWorkspaceProgress(progress, "Filsvaret nådde utmatningsgränsen; försöker en gång till med en större men mer kompakt fullfil.")
+			return retryCompleteWorkspaceFileOllama(
+				ctx, ollamaURL, model, fileSystem, fileMessages, format,
+			)
+		}
+		return "", err
+	}
+	generated, parseErr := parseGeneratedWorkspaceFile(content)
+	if parseErr == nil {
+		return generated, nil
+	}
+	if errors.Is(parseErr, io.ErrUnexpectedEOF) {
+		reportWorkspaceProgress(progress, "Filsvaret slutade mitt i JSON-formatet; försöker automatiskt en gång till.")
+		return retryCompleteWorkspaceFileOllama(
+			ctx, ollamaURL, model, fileSystem, fileMessages, format,
+		)
+	}
+	return "", parseErr
+}
+
+func retryCompleteWorkspaceFileOllama(
+	ctx context.Context,
+	ollamaURL, model, system string,
+	messages []ollamaMessage,
+	format any,
+) (string, error) {
+	retryMessages := append([]ollamaMessage(nil), messages...)
+	retryMessages = append(retryMessages, ollamaMessage{
+		Role: "user",
+		Content: "Det föregående filsvaret kapades. Försök igen från början. " +
+			"Returnera samma kompletta fungerande fil, men håll implementationen kompakt och lämna inga funktioner halvfärdiga.",
+	})
+	content, err := askWorkspaceStructuredTimeout(
+		ctx, ollamaURL, model, system, retryMessages, format, 16384, 5*time.Minute,
 	)
 	if err != nil {
 		return "", err
 	}
+	return parseGeneratedWorkspaceFile(content)
+}
+
+func parseGeneratedWorkspaceFile(content string) (string, error) {
 	var generated struct {
 		Content string `json:"content"`
 	}
@@ -229,6 +404,28 @@ finns i filen eller målmiljöns standard-API.`
 		return "", errors.New("modellen returnerade en tom fil")
 	}
 	return generated.Content, nil
+}
+
+func workspaceSnapshotFile(messages []ollamaMessage, wantedPath string) (string, bool) {
+	wantedPath = filepath.ToSlash(strings.TrimSpace(wantedPath))
+	if wantedPath == "" {
+		return "", false
+	}
+	header := "\n--- " + wantedPath + " ---\n"
+	for _, message := range messages {
+		source := "\n" + strings.ReplaceAll(message.Content, "\r\n", "\n")
+		start := strings.Index(source, header)
+		if start < 0 {
+			continue
+		}
+		start += len(header)
+		end := strings.Index(source[start:], "\n--- ")
+		if end < 0 {
+			return source[start:], true
+		}
+		return source[start : start+end], true
+	}
+	return "", false
 }
 
 func compactWorkspaceMessage(message string) string {

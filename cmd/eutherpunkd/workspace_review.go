@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var errWorkspaceOutputTruncated = errors.New("workspace model output truncated")
+
 const (
 	maxWorkspaceRepairRounds = 2
 	maxWorkspaceReviewBytes  = 96 * 1024
@@ -333,6 +335,10 @@ func askWorkspaceStructuredTimeout(
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	think := false
+	numCtx := 12288
+	if numPredict > 6144 {
+		numCtx = 32768
+	}
 	payload := ollamaChatRequest{
 		Model:    model,
 		Stream:   false,
@@ -340,7 +346,7 @@ func askWorkspaceStructuredTimeout(
 		Think:    &think,
 		Format:   format,
 		Options: map[string]any{
-			"num_ctx":     12288,
+			"num_ctx":     numCtx,
 			"num_predict": numPredict,
 			"temperature": 0,
 		},
@@ -364,7 +370,7 @@ func askWorkspaceStructuredTimeout(
 		return "", err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 128*1024))
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024))
 	if err != nil {
 		return "", err
 	}
@@ -380,6 +386,13 @@ func askWorkspaceStructuredTimeout(
 	}
 	if strings.TrimSpace(out.Message.Content) == "" {
 		return "", errors.New("modellen gav en tom kvalitetsgranskning")
+	}
+	if strings.EqualFold(strings.TrimSpace(out.DoneReason), "length") {
+		return out.Message.Content, fmt.Errorf(
+			"%w after %d tokens",
+			errWorkspaceOutputTruncated,
+			out.EvalCount,
+		)
 	}
 	return out.Message.Content, nil
 }
