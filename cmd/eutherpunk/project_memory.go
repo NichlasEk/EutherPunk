@@ -33,6 +33,10 @@ type projectMemoryState struct {
 	Files              []string `json:"files,omitempty"`
 	Issues             []string `json:"issues,omitempty"`
 	Summary            string   `json:"summary,omitempty"`
+	AssetStatus        string   `json:"asset_status,omitempty"`
+	AssetName          string   `json:"asset_name,omitempty"`
+	AssetPath          string   `json:"asset_path,omitempty"`
+	AssetRequest       string   `json:"asset_request,omitempty"`
 	UpdatedAt          string   `json:"updated_at"`
 }
 
@@ -247,6 +251,13 @@ func projectMemoryContext(workspace workspaceState) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	assets, err := readBoundedProjectMemoryFile(
+		filepath.Join(dir, assetRegistryFileName),
+		maxAssetRegistrySize,
+	)
+	if err != nil {
+		return "", err
+	}
 	var out strings.Builder
 	out.WriteString("PROJEKTSPECIFIKT LÅNGTIDSMINNE (HARNESS-ÄGT)\n")
 	out.WriteString("Använd detta för kontinuitet. Projektfiler och nya verifieringar har företräde vid konflikt.\n")
@@ -258,6 +269,11 @@ func projectMemoryContext(workspace workspaceState) (string, error) {
 	if state != "" {
 		out.WriteString("\n--- .eutherpunk/state.json ---\n")
 		out.WriteString(state)
+		out.WriteByte('\n')
+	}
+	if assets != "" {
+		out.WriteString("\n--- .eutherpunk/assets.json ---\n")
+		out.WriteString(assets)
 		out.WriteByte('\n')
 	}
 	if journal != "" {

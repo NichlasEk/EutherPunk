@@ -363,6 +363,7 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			fmt.Println("/job open öppnar ett färdigt förslag; /job cancel avbryter.")
 			fmt.Println("/image <engelsk prompt> genererar en PNG under arbetsytans assets/.")
 			fmt.Println("/bild är ett alias för /image.")
+			fmt.Println("Du kan också be naturligt om en bildgenererad bakgrund eller asset; CLI:t skapar och kopplar in den före kodjobbet.")
 			fmt.Println("/system visar grundläggande systeminformation lokalt.")
 			fmt.Println("/system share delar en maskerad rapport med modellen.")
 			fmt.Println("/system share full delar även identifierande fält efter extra godkännande.")
@@ -426,6 +427,38 @@ func assist(cfg cliConfig, initialPrompt string) error {
 			}
 		}
 		if cfg.workspace.Root != "" && pendingJob.Job.ID == "" {
+			preparedAsset, handledAsset, assetErr := prepareNaturalWorkspaceAsset(
+				cfg,
+				reader,
+				&permissions,
+				prompt,
+				trimHistory(history),
+				os.Stdout,
+			)
+			if assetErr != nil {
+				fmt.Fprintln(os.Stderr, "assetflödesfel:", assetErr)
+				history = history[:len(history)-1]
+				prompt = ""
+				continue
+			}
+			if handledAsset {
+				if preparedAsset.Path == "" {
+					history = append(history, chatMessage{
+						Role:    "assistant",
+						Content: "[Bildasseten skapades inte lokalt; ingen kod ändrades.]",
+					})
+					history = trimHistory(history)
+					prompt = ""
+					continue
+				}
+				fmt.Println("eutherpunk> asseten är klar; lämnar den exakta sökvägen till kodaren.")
+				history = append(
+					history,
+					chatMessage{Role: "assistant", Content: preparedAsset.Summary},
+					chatMessage{Role: "user", Content: preparedAsset.CodePrompt},
+				)
+				history = trimHistory(history)
+			}
 			fmt.Println("eutherpunk> startar kodjobb…")
 			startedJob, started, startErr := beginBackgroundWorkspaceJob(
 				context.Background(),

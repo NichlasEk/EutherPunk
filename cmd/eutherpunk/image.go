@@ -40,6 +40,12 @@ type cliImageJob struct {
 	Error    string           `json:"error,omitempty"`
 }
 
+type createdCLIImageAsset struct {
+	Path  string
+	URL   string
+	Saved bool
+}
+
 type imageDirectiveWriter struct {
 	mu      sync.Mutex
 	output  io.Writer
@@ -204,6 +210,37 @@ func runCLIImageAsset(
 	if prompt == "" {
 		return "", errors.New("använd /image <bildprompt>")
 	}
+	asset, err := createCLIImageAsset(
+		cfg,
+		reader,
+		permissions,
+		prompt,
+		history,
+		output,
+		"",
+	)
+	if err != nil {
+		return "", err
+	}
+	if asset.Saved {
+		return "Bildasset sparad i arbetsytan: " + asset.Path, nil
+	}
+	return "Bild klar på servern: " + asset.URL, nil
+}
+
+func createCLIImageAsset(
+	cfg cliConfig,
+	reader *bufio.Reader,
+	permissions *sessionPermissions,
+	prompt string,
+	history []chatMessage,
+	output io.Writer,
+	preferredFilename string,
+) (createdCLIImageAsset, error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return createdCLIImageAsset{}, errors.New("bildprompten är tom")
+	}
 	fmt.Fprintln(output, "eutherpunk> genererar bildasset… (Esc Esc avbryter)")
 	var image cliImageResponse
 	_, err := runInterruptibleAgentCall(output, func(ctx context.Context) (string, error) {
@@ -213,12 +250,15 @@ func runCLIImageAsset(
 	})
 	if err != nil {
 		if errors.Is(err, errAgentInterrupted) {
-			return "", errors.New("bildjobbet avbröts")
+			return createdCLIImageAsset{}, errors.New("bildjobbet avbröts")
 		}
 		if strings.Contains(err.Error(), "insufficient_scope") {
-			return "", errors.New("din befintliga CLI-inloggning saknar mediaåtkomst; kör /logout och därefter /auth login för att godkänna det nya scopet")
+			return createdCLIImageAsset{}, errors.New("din befintliga CLI-inloggning saknar mediaåtkomst; kör /logout och därefter /auth login för att godkänna det nya scopet")
 		}
-		return "", err
+		return createdCLIImageAsset{}, err
+	}
+	if strings.TrimSpace(preferredFilename) != "" {
+		image.Filename = safeCLIImageFilename(preferredFilename)
 	}
 	assetPath, saved, err := saveCLIImageAsset(
 		context.Background(),
@@ -228,15 +268,15 @@ func runCLIImageAsset(
 		image,
 	)
 	if err != nil {
-		return "", err
+		return createdCLIImageAsset{}, err
 	}
 	if saved {
 		fmt.Fprintln(output, "eutherpunk> bildasset sparad:", assetPath)
-		return "Bildasset sparad i arbetsytan: " + assetPath, nil
+		return createdCLIImageAsset{Path: assetPath, Saved: true}, nil
 	}
 	imageURL := absoluteCLIURL(cfg.apiURL, image.URL)
 	fmt.Fprintln(output, "eutherpunk> bild klar på servern:", imageURL)
-	return "Bild klar på servern: " + imageURL, nil
+	return createdCLIImageAsset{URL: imageURL}, nil
 }
 
 func fetchCLIImageJob(ctx context.Context, cfg cliConfig, id string) (cliImageJob, error) {

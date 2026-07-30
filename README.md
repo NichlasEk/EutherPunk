@@ -219,6 +219,18 @@ must be replaced with `/logout` followed by a new EutherID browser approval.
 Inside an initialized coding workspace, `/image <prompt>` (or `/bild`) is the
 deterministic asset command and bypasses workspace-code routing.
 
+A combined request can also stay entirely in the natural conversation, for
+example: `Fint, nu skulle jag vilja ha havet som bakgrund med en riktig
+bildgenererad asset.` The CLI recognizes explicit generated-image roles such as
+backgrounds, sprites, textures, icons and covers. It generates and saves the PNG
+first, records its logical role and SHA-256 in `.eutherpunk/assets.json`, and
+then starts the coding job with the exact relative path. The code model is told
+to preserve the existing project and integrate that file rather than inventing
+an asset path or embedding image data. Follow-ups such as `gör havet mörkare`
+reuse and supersede the matching active asset. Ordinary code styling such as
+`gör bakgrunden blå med CSS` remains a normal coding request and does not invoke
+image generation.
+
 ### Non-interactive local worker
 
 `eutherpunk worker` exposes the bounded workspace harness to parent agents and
