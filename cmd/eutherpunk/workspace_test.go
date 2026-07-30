@@ -23,6 +23,13 @@ func TestWorkspaceSnapshotSkipsSecretsBinaryAndSymlinks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "binary.bin"), []byte{0, 1, 2}, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(
+		filepath.Join(root, "fake-ocean.png"),
+		[]byte("iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	if err := os.WriteFile(outside, []byte("outside-secret"), 0o600); err != nil {
 		t.Fatal(err)
@@ -44,7 +51,13 @@ func TestWorkspaceSnapshotSkipsSecretsBinaryAndSymlinks(t *testing.T) {
 	if !strings.Contains(context, "separat strukturerad filkanal") {
 		t.Fatalf("snapshot does not describe the structured file channel: %s", context)
 	}
-	for _, forbidden := range []string{"TOKEN=secret", "outside-secret", "binary.bin"} {
+	for _, forbidden := range []string{
+		"TOKEN=secret",
+		"outside-secret",
+		"binary.bin",
+		"fake-ocean.png",
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+	} {
 		if strings.Contains(context, forbidden) {
 			t.Fatalf("snapshot contains %q: %s", forbidden, context)
 		}

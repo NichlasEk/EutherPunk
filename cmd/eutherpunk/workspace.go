@@ -979,7 +979,9 @@ func readWorkspaceFiles(workspace workspaceState) ([]workspaceFile, error) {
 			}
 			return nil
 		}
-		if entry.Type().IsRegular() && !shouldSkipWorkspaceFile(relative) {
+		if entry.Type().IsRegular() &&
+			!shouldSkipWorkspaceFile(relative) &&
+			!isBinaryWorkspacePath(relative) {
 			paths = append(paths, relative)
 		}
 		return nil
