@@ -30,6 +30,30 @@ func TestDetectNaturalOceanBackgroundAsset(t *testing.T) {
 	}
 }
 
+func TestDetectObservedNaturalImagePhrases(t *testing.T) {
+	for _, test := range []struct {
+		request string
+		role    string
+	}{
+		{
+			request: "du utan att bygga helt nytt kan du prova att göra en bild av havet och lägga in som bakgrund på tetris html",
+			role:    "background",
+		},
+		{
+			request: "gör en bild av havet och lägg in som assett",
+			role:    "asset",
+		},
+	} {
+		intent, ok := detectWorkspaceAssetIntent(
+			test.request,
+			workspaceAssetRegistry{Version: assetRegistryVersion},
+		)
+		if !ok || intent.Role != test.role || intent.LogicalName != "ocean-"+test.role {
+			t.Fatalf("request %q produced intent %#v, ok=%v", test.request, intent, ok)
+		}
+	}
+}
+
 func TestAssetFollowupReusesLogicalAsset(t *testing.T) {
 	registry := workspaceAssetRegistry{
 		Version: assetRegistryVersion,
@@ -128,17 +152,6 @@ func TestPrepareNaturalWorkspaceAssetGeneratesRegistersAndHandsOff(t *testing.T)
 		!strings.HasSuffix(prepared.Path, ".png") {
 		t.Fatalf("asset path = %q", prepared.Path)
 	}
-	if !strings.Contains(prepared.CodePrompt, "`"+prepared.Path+"`") ||
-		!strings.Contains(prepared.CodePrompt, "Preserve all unrelated working behavior") {
-		t.Fatalf("code handoff = %q", prepared.CodePrompt)
-	}
-	got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(prepared.Path)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, png) {
-		t.Fatalf("saved asset = %q", got)
-	}
 	registry, err := loadWorkspaceAssetRegistry(cfg.workspace)
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +161,19 @@ func TestPrepareNaturalWorkspaceAssetGeneratesRegistersAndHandsOff(t *testing.T)
 		registry.Assets[0].Path != prepared.Path ||
 		registry.Assets[0].SHA256 == "" {
 		t.Fatalf("registry = %#v", registry)
+	}
+	if !strings.Contains(prepared.CodePrompt, "`"+prepared.Path+"`") ||
+		!strings.Contains(prepared.CodePrompt, "HARNESS-VERIFIED IMMUTABLE ASSET") ||
+		!strings.Contains(prepared.CodePrompt, registry.Assets[0].SHA256) ||
+		!strings.Contains(prepared.CodePrompt, "Preserve all unrelated working behavior") {
+		t.Fatalf("code handoff = %q", prepared.CodePrompt)
+	}
+	got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(prepared.Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, png) {
+		t.Fatalf("saved asset = %q", got)
 	}
 	context, err := projectMemoryContext(cfg.workspace)
 	if err != nil {

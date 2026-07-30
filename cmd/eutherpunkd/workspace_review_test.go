@@ -16,7 +16,8 @@ func TestWorkspaceReviewKeepsAcceptedBooleanAuthoritative(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !strings.Contains(request.Messages[0].Content, "outtalat krav") ||
-			!strings.Contains(request.Messages[0].Content, "Unicode-normalisering") {
+			!strings.Contains(request.Messages[0].Content, "Unicode-normalisering") ||
+			!strings.Contains(request.Messages[0].Content, "HARNESS-VERIFIED IMMUTABLE ASSET") {
 			t.Fatalf("review contract missing from system prompt: %q", request.Messages[0].Content)
 		}
 		_ = json.NewEncoder(w).Encode(ollamaChatResponse{

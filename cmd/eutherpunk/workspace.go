@@ -1069,19 +1069,46 @@ func parseFileProposal(answer string) (fileProposal, string, bool, error) {
 }
 
 func validateProposedFile(file workspaceFile) error {
+	if err := validateWorkspacePath(file.Path); err != nil {
+		return err
+	}
 	path := filepath.Clean(filepath.FromSlash(strings.TrimSpace(file.Path)))
-	if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("otillåten filsökväg %q", file.Path)
-	}
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if part == ".git" || part == projectMemoryDirName || shouldSkipWorkspaceFile(part) {
-			return fmt.Errorf("skyddad filsökväg %q", file.Path)
-		}
-	}
 	if len(file.Content) > maxProposalFileBytes || !utf8.ValidString(file.Content) {
 		return fmt.Errorf("filen %q är för stor eller inte giltig UTF-8", file.Path)
 	}
+	if isBinaryWorkspacePath(path) {
+		return fmt.Errorf(
+			"binärfilen %q kan inte skapas i modellens textkanal; använd EutherPunks assetverktyg",
+			file.Path,
+		)
+	}
 	return nil
+}
+
+func validateWorkspacePath(value string) error {
+	path := filepath.Clean(filepath.FromSlash(strings.TrimSpace(value)))
+	if path == "." || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("otillåten filsökväg %q", value)
+	}
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".git" || part == projectMemoryDirName || shouldSkipWorkspaceFile(part) {
+			return fmt.Errorf("skyddad filsökväg %q", value)
+		}
+	}
+	return nil
+}
+
+func isBinaryWorkspacePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+		".woff", ".woff2", ".ttf", ".otf",
+		".mp3", ".wav", ".ogg", ".flac",
+		".mp4", ".webm", ".mov",
+		".pdf", ".zip", ".gz", ".7z":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateWorkspaceFileSet(files []workspaceFile) error {
@@ -1299,8 +1326,7 @@ func canonicalWorkspaceRoot(workspace workspaceState) (string, error) {
 }
 
 func safeWorkspaceTarget(root, relative string) (string, bool, error) {
-	file := workspaceFile{Path: relative}
-	if err := validateProposedFile(file); err != nil {
+	if err := validateWorkspacePath(relative); err != nil {
 		return "", false, err
 	}
 	clean := filepath.Clean(filepath.FromSlash(relative))

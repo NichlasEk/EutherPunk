@@ -64,6 +64,11 @@ kräver dem. Underkänn inte för att kandidaten saknar tester när användaren 
 bad om tester. Om en invändning beror på ett outtalat krav eller bara är en
 möjlig förbättring ska förslaget accepteras.
 
+Om uppgiften innehåller "HARNESS-VERIFIED IMMUTABLE ASSET" har CLI:t redan
+skapat och validerat den angivna binärfilen utanför modellens textkanal.
+Kräv aldrig att kandidaten returnerar den filen igen. Kontrollera i stället att
+de föreslagna textfilerna refererar till exakt den verifierade sökvägen.
+
 Undvik kosmetiskt tyckande. Svara endast med JSON enligt schemat. Sätt
 "accepted" till true och "issues" till en tom lista när de uttryckliga kraven är
 uppfyllda. När "accepted" är false ska "issues" endast innehålla verkliga,

@@ -289,6 +289,22 @@ func TestInvalidInlineJavaScriptIsRejectedBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestBinaryAssetProposalIsRejectedBeforeWrite(t *testing.T) {
+	content := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+	if err := validateProposedFile(workspaceFile{
+		Path:    "assets/ocean.png",
+		Content: content,
+	}); err == nil || !strings.Contains(err.Error(), "textkanal") {
+		t.Fatalf("binary asset proposal was accepted: %v", err)
+	}
+	if err := validateProposedFile(workspaceFile{
+		Path:    "assets/ocean.svg",
+		Content: `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+	}); err != nil {
+		t.Fatalf("text SVG was rejected: %v", err)
+	}
+}
+
 func TestParseFileProposalKeepsVisibleAnswer(t *testing.T) {
 	answer := "Jag skapar spelet.\n```eutherpunk_files\n" +
 		`{"files":[{"path":"main.lua","content":"print('tetris')\n"}]}` +

@@ -141,13 +141,19 @@ func prepareNaturalWorkspaceAsset(
 	}
 
 	codePrompt := fmt.Sprintf(
-		"ORIGINAL USER REQUEST:\n%s\n\n"+
-			"ASSET TOOL RESULT:\nA generated PNG is ready at `%s` inside the selected workspace.\n"+
-			"Update the existing project to use exactly that relative asset path as the requested %s. "+
-			"Do not regenerate, rename or embed the image. Preserve all unrelated working behavior, "+
-			"gameplay, controls and layout. Iterate on existing files with the smallest necessary change.",
+		"USER GOAL (MEDIA PHASE ALREADY COMPLETED):\n%s\n\n"+
+			"HARNESS-VERIFIED IMMUTABLE ASSET:\n"+
+			"The CLI image tool has already generated, validated and saved a real PNG at `%s` "+
+			"inside the selected workspace. SHA-256: `%s`.\n"+
+			"Treat that file's existence as established during planning and quality review. "+
+			"It is binary input outside the model's text-only file channel and MUST NOT appear "+
+			"in the file plan or proposal. Never regenerate, rename, encode or replace it.\n\n"+
+			"CODE PHASE:\nUpdate the existing project to reference exactly that relative path "+
+			"as the requested %s. Propose only the smallest necessary textual source-file changes. "+
+			"Preserve all unrelated working behavior, gameplay, controls and layout.",
 		request,
 		record.Path,
+		record.SHA256,
 		record.Role,
 	)
 	if intent.PreviousAsset != nil {
@@ -179,8 +185,15 @@ func detectWorkspaceAssetIntent(
 	explicitImage := containsAnyPhrase(normalized,
 		"bildgenererad", "bild genererad", "genererad bild", "riktig bild",
 		"image generated", "generated image", "generate image", "create image",
-		"skapa en bild", "generera en bild", "bildasset", "image asset",
+		"skapa en bild", "generera en bild", "gör en bild", "göra en bild",
+		"rita en bild", "bild av", "bildasset", "image asset",
 	)
+	if role == "" && explicitImage && containsAnyPhrase(
+		normalized,
+		"asset", "assett", "lägg in", "lagg in", "använd", "anvand", "use it",
+	) {
+		role = "asset"
+	}
 	visualRevision := previous != nil && containsAnyPhrase(normalized,
 		"morkare", "ljusare", "mer realist", "annan stil", "andra stil",
 		"byt", "andra", "forandra", "modify", "darker", "lighter",

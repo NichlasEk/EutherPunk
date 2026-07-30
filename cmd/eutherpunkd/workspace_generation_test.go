@@ -52,6 +52,33 @@ func TestWorkspacePlanMergesDuplicatePaths(t *testing.T) {
 	}
 }
 
+func TestWorkspacePlanRejectsBinaryAssetFromTextChannel(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(ollamaChatResponse{
+			Message: ollamaMessage{
+				Role: "assistant",
+				Content: `{
+					"message":"skapar havet",
+					"files":[{"path":"assets/ocean.png","instruction":"Returnera en PNG som Base64."}]
+				}`,
+			},
+			Done: true,
+		})
+	}))
+	defer ollama.Close()
+
+	_, err := planWorkspaceOllama(
+		context.Background(),
+		ollama.URL,
+		"test-model",
+		"system",
+		[]ollamaMessage{{Role: "user", Content: "gör en bild av havet"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "binärfilen") {
+		t.Fatalf("binary plan was not rejected: %v", err)
+	}
+}
+
 func TestExistingWorkspaceFileUsesMinimalPatch(t *testing.T) {
 	var calls int
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

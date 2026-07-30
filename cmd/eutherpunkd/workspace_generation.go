@@ -81,7 +81,13 @@ och en precis instruction om filens ansvar, gränssnitt och acceptanskrav.
 Välj minsta antal filer. När användaren ber att skapa eller ändra kod ska planen
 innehålla filerna direkt; fråga inte om lov eftersom CLI:t gör det separat.
 Varje relativ filsökväg får förekomma högst en gång. Samla alla ändringar för
-samma fil i en enda filpost.`
+samma fil i en enda filpost.
+
+Filkanalen är endast för UTF-8-text. Planera aldrig PNG, JPEG, GIF, WebP,
+ljud, video, typsnitt, PDF, arkiv eller andra binärfiler. När uppgiften
+innehåller "HARNESS-VERIFIED IMMUTABLE ASSET" finns den filen redan lokalt:
+planera endast de textbaserade källfiler som ska referera till dess exakta
+sökväg.`
 	format := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -127,6 +133,12 @@ samma fil i en enda filpost.`
 		if file.Path == "" || file.Path == "." || file.Instruction == "" {
 			return workspacePlan{}, errors.New("filplanen innehåller en tom sökväg eller instruktion")
 		}
+		if isBinaryWorkspacePlanPath(file.Path) {
+			return workspacePlan{}, fmt.Errorf(
+				"filplanen försökte skapa binärfilen %q i textkanalen",
+				file.Path,
+			)
+		}
 		if len(file.Instruction) > 2000 {
 			return workspacePlan{}, errors.New("filplanens instruktion är för lång")
 		}
@@ -151,6 +163,19 @@ samma fil i en enda filpost.`
 	plan.Files = normalized
 	plan.Message = compactWorkspaceMessage(plan.Message)
 	return plan, nil
+}
+
+func isBinaryWorkspacePlanPath(value string) bool {
+	switch strings.ToLower(filepath.Ext(value)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+		".woff", ".woff2", ".ttf", ".otf",
+		".mp3", ".wav", ".ogg", ".flac",
+		".mp4", ".webm", ".mov",
+		".pdf", ".zip", ".gz", ".7z":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeWorkspacePlanPath(value string) string {
