@@ -54,6 +54,32 @@ func TestDetectObservedNaturalImagePhrases(t *testing.T) {
 	}
 }
 
+func TestDetectStandaloneImageRequestInsideCodingWorkspace(t *testing.T) {
+	request := "du kan du prova att göra en bild på en glad katt i hatt och visa här?"
+	intent, ok := detectWorkspaceAssetIntent(
+		request,
+		workspaceAssetRegistry{Version: assetRegistryVersion},
+	)
+	if !ok {
+		t.Fatal("observed standalone image request was routed to the coding worker")
+	}
+	if intent.Role != "asset" || intent.LogicalName != "generated-asset" {
+		t.Fatalf("intent = %#v", intent)
+	}
+	if !strings.Contains(intent.ImagePrompt, request) {
+		t.Fatalf("image prompt does not preserve original request: %q", intent.ImagePrompt)
+	}
+}
+
+func TestImageResizeCodingRequestDoesNotGenerateImage(t *testing.T) {
+	if intent, ok := detectWorkspaceAssetIntent(
+		"Gör en bild större med CSS och visa den i dialogen",
+		workspaceAssetRegistry{Version: assetRegistryVersion},
+	); ok {
+		t.Fatalf("image-related coding request became generation intent: %#v", intent)
+	}
+}
+
 func TestAssetFollowupReusesLogicalAsset(t *testing.T) {
 	registry := workspaceAssetRegistry{
 		Version: assetRegistryVersion,

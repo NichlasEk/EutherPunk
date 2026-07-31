@@ -25,6 +25,8 @@ type terminalSettings struct {
 	AcceptTab     bool
 	History       bool
 	GhostColor    string
+	ImagePreview  string
+	ImageMaxWidth int
 }
 
 type cliSettings struct {
@@ -70,6 +72,8 @@ func defaultCLISettings(configPath, apiURL, model string, memoryEnabled bool) cl
 			AcceptTab:     true,
 			History:       true,
 			GhostColor:    "#5cff5c",
+			ImagePreview:  "auto",
+			ImageMaxWidth: 80,
 		},
 	}
 }
@@ -191,6 +195,10 @@ func (settings *cliSettings) set(section, key, raw string) error {
 			return setSettingsBool(raw, &settings.Terminal.History)
 		case "ghost_color":
 			return setSettingsString(raw, &settings.Terminal.GhostColor)
+		case "image_preview":
+			return setSettingsString(raw, &settings.Terminal.ImagePreview)
+		case "image_max_width":
+			return setSettingsInt(raw, &settings.Terminal.ImageMaxWidth)
 		default:
 			return fmt.Errorf("okänd inställning [terminal].%s", key)
 		}
@@ -228,6 +236,14 @@ func (settings cliSettings) Validate() error {
 	}
 	if !validHexColor(settings.Terminal.GhostColor) {
 		return errors.New("[terminal].ghost_color måste ha formatet #rrggbb")
+	}
+	switch settings.Terminal.ImagePreview {
+	case "auto", "kitty", "blocks", "path", "off":
+	default:
+		return errors.New("[terminal].image_preview måste vara \"auto\", \"kitty\", \"blocks\", \"path\" eller \"off\"")
+	}
+	if settings.Terminal.ImageMaxWidth < 20 || settings.Terminal.ImageMaxWidth > 160 {
+		return errors.New("[terminal].image_max_width måste vara 20-160")
 	}
 	return nil
 }
@@ -322,6 +338,8 @@ accept_up_arrow = %t
 accept_tab = %t
 history = %t
 ghost_color = %s
+image_preview = %s
+image_max_width = %d
 `,
 		settings.Version,
 		strconv.Quote(settings.Profile),
@@ -342,6 +360,8 @@ ghost_color = %s
 		settings.Terminal.AcceptTab,
 		settings.Terminal.History,
 		strconv.Quote(strings.ToLower(settings.Terminal.GhostColor)),
+		strconv.Quote(strings.ToLower(settings.Terminal.ImagePreview)),
+		settings.Terminal.ImageMaxWidth,
 	)
 }
 

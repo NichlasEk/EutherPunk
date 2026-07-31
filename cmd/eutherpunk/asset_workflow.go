@@ -257,12 +257,23 @@ func detectWorkspaceAssetIntent(
 		"bildgenererad", "bild genererad", "genererad bild", "riktig bild",
 		"image generated", "generated image", "generate image", "create image",
 		"skapa en bild", "generera en bild", "gör en bild", "göra en bild",
-		"rita en bild", "bild av", "bildasset", "image asset",
+		"rita en bild", "bild av", "bild på", "image of", "picture of",
+		"bildasset", "image asset",
 	)
-	if role == "" && explicitImage && containsAnyPhrase(
-		normalized,
+	standaloneImage := containsAnyPhrase(normalized,
+		"skapa en bild på", "skapa en bild av",
+		"generera en bild på", "generera en bild av",
+		"gör en bild på", "gör en bild av",
+		"göra en bild på", "göra en bild av",
+		"rita en bild på", "rita en bild av",
+		"create an image of", "create a picture of",
+		"generate an image of", "generate a picture of",
+		"make an image of", "make a picture of",
+	)
+	assetRequest := containsAnyPhrase(normalized,
 		"asset", "assett", "lägg in", "lagg in", "använd", "anvand", "use it",
-	) {
+	)
+	if role == "" && explicitImage && (standaloneImage || assetRequest) {
 		role = "asset"
 	}
 	visualRevision := previous != nil && containsAnyPhrase(normalized,

@@ -116,6 +116,8 @@ func printSettingsStatus(settings cliSettings) {
 	fmt.Println("Arbetsytefiler:", strings.ToUpper(string(settings.Files)))
 	fmt.Println("Minne:", onOff(settings.MemoryEnabled))
 	fmt.Println("Autocomplete:", onOff(settings.Terminal.Autocomplete))
+	fmt.Println("Bildvisning:", strings.ToUpper(settings.Terminal.ImagePreview))
+	fmt.Println("Maximal bildbredd:", settings.Terminal.ImageMaxWidth)
 	fmt.Println("Datornamn delas:", onOff(settings.Privacy.ShareHostname))
 	fmt.Println("Användarnamn delas:", onOff(settings.Privacy.ShareUsername))
 	fmt.Println("Arbetskatalog delas:", onOff(settings.Privacy.ShareWorkingDirectory))

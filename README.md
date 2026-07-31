@@ -208,7 +208,9 @@ model. A response can queue briefly while Ollama switches the shared GPU, but
 the chat and coding roles never change places.
 
 The interactive CLI can also turn an explicit image request into a server-side
-image job. Its streamed `EUTHERPUNK_IMAGE_PROMPT` tool line is hidden, the CLI
+image job, including a standalone request such as `gör en bild på en glad katt i
+hatt och visa här` while a coding workspace is selected. Its streamed
+`EUTHERPUNK_IMAGE_PROMPT` tool line is hidden, the CLI
 polls the real image job, downloads only a same-origin PNG, and saves it under
 `assets/` in the selected workspace. `files = "auto"` writes the new asset
 automatically; other enabled file modes ask first. Existing filenames,
@@ -459,7 +461,18 @@ accept_up_arrow = true
 accept_tab = true
 history = true
 ghost_color = "#5cff5c"
+image_preview = "auto"
+image_max_width = 80
 ```
+
+Generated workspace images are previewed immediately in an interactive terminal.
+`auto` uses Kitty's native image protocol when it is available without a tmux
+or screen intermediary, and otherwise renders a dependency-free true-color block
+preview that also survives ordinary SSH and browser terminals. Set
+`image_preview` to `kitty`, `blocks`, `path` or `off` to override that choice;
+`image_max_width` accepts 20-160 terminal columns. The saved asset line uses an
+absolute path so an authenticated EutherGate session can hand the same validated
+file to its image preview without copying it.
 
 ## EutherID authentication
 

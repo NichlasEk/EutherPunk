@@ -271,7 +271,14 @@ func createCLIImageAsset(
 		return createdCLIImageAsset{}, err
 	}
 	if saved {
-		fmt.Fprintln(output, "eutherpunk> bildasset sparad:", assetPath)
+		previewPath, pathErr := absoluteCLIImageAssetPath(cfg, assetPath)
+		if pathErr != nil {
+			return createdCLIImageAsset{}, pathErr
+		}
+		fmt.Fprintln(output, "eutherpunk> bildasset sparad:", previewPath)
+		if err := previewCLIImageAsset(cfg, previewPath, output); err != nil {
+			fmt.Fprintln(output, "eutherpunk> bildförhandsvisning kunde inte visas:", err)
+		}
 		return createdCLIImageAsset{Path: assetPath, Saved: true}, nil
 	}
 	imageURL := absoluteCLIURL(cfg.apiURL, image.URL)
