@@ -34,6 +34,9 @@ const defaultSystemPrompt = "Du ar EutherPunk, en lokal AI-agent for kod, konfig
 const ollamaNumCtx = 4096
 const workspaceOllamaNumCtx = 8192
 const maxClientContextBytes = 32 * 1024
+const defaultComfyReleaseTimeout = 45 * time.Second
+const defaultComfyMinVRAMHeadroomBytes = uint64(4 * 1024 * 1024 * 1024)
+const defaultComfyReleasePollInterval = 500 * time.Millisecond
 
 const (
 	safeImageDefaultWidth  = 512
@@ -76,7 +79,68 @@ type serverConfig struct {
 	eutherNet            config.EutherNetConfig
 	voice                config.VoiceConfig
 	image                config.ImageConfig
+	gpuSafety            *gpuSafetyGate
 	users                map[string]config.UserConfig
+}
+
+type gpuSafetyGate struct {
+	useMu   sync.RWMutex
+	stateMu sync.RWMutex
+	reason  string
+}
+
+func (gate *gpuSafetyGate) block(reason string) {
+	if gate == nil {
+		return
+	}
+	gate.stateMu.Lock()
+	defer gate.stateMu.Unlock()
+	gate.reason = strings.TrimSpace(reason)
+}
+
+func (gate *gpuSafetyGate) clear() {
+	if gate == nil {
+		return
+	}
+	gate.stateMu.Lock()
+	defer gate.stateMu.Unlock()
+	gate.reason = ""
+}
+
+func (gate *gpuSafetyGate) check() error {
+	if gate == nil {
+		return nil
+	}
+	gate.stateMu.RLock()
+	defer gate.stateMu.RUnlock()
+	if gate.reason == "" {
+		return nil
+	}
+	return fmt.Errorf(
+		"lokal AI är säkerhetsstoppad efter misslyckad GPU-frigöring: %s",
+		gate.reason,
+	)
+}
+
+func (gate *gpuSafetyGate) beginLocalAI() (func(), error) {
+	if gate == nil {
+		return func() {}, nil
+	}
+	gate.useMu.RLock()
+	if err := gate.check(); err != nil {
+		gate.useMu.RUnlock()
+		return nil, err
+	}
+	return gate.useMu.RUnlock, nil
+}
+
+func (gate *gpuSafetyGate) beginImage() func() {
+	if gate == nil {
+		return func() {}
+	}
+	gate.useMu.Lock()
+	gate.block("ett bildjobb använder GPU:n")
+	return gate.useMu.Unlock
 }
 
 type chatRequest struct {
@@ -369,6 +433,7 @@ func main() {
 		eutherNet:            appConfig.EutherNet,
 		voice:                appConfig.Voice,
 		image:                appConfig.Image,
+		gpuSafety:            &gpuSafetyGate{},
 		users:                appConfig.Users,
 	}
 
@@ -757,6 +822,12 @@ func handleChat(cfg serverConfig) http.HandlerFunc {
 		var answer string
 		var workspaceFiles []workspaceResponseFile
 		workspaceRequest = workspaceRequest && !visionRequest
+		releaseGPU, err := cfg.gpuSafety.beginLocalAI()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		defer releaseGPU()
 		if workspaceRequest {
 			answer, workspaceFiles, err = askWorkspaceOllama(
 				r.Context(), cfg.ollamaURL, model, system, messages, nil,
@@ -829,6 +900,12 @@ func handleChatStream(cfg serverConfig) http.HandlerFunc {
 			system = systemPromptWithImageTool(system, prompts)
 		}
 
+		releaseGPU, err := cfg.gpuSafety.beginLocalAI()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		defer releaseGPU()
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		if visionRequest {
@@ -1564,40 +1641,20 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 	}
 	req.ImageModel = effectiveImageModel(req.ImageModel, req.SourceImage)
 	imageModel := normalizeImageModel(req.ImageModel)
-	if err := syncImageModelControl(ctx, cfg.image, imageModel); err != nil {
-		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
-		return
-	}
 	if !isSenseNovaImageModel(imageModel) || imageModel == "sensenova-u1-8b-fast" {
 		req.Lora = "none"
+	}
+	if releaseGPU, gateErr := cfg.gpuSafety.beginLocalAI(); gateErr == nil {
+		if prompt := imagePromptFromContext(ctx, cfg, req); prompt != "" {
+			req.Prompt = prompt
+		}
+		releaseGPU()
 	} else {
-		setImageJobStatusMessage(jobID, "loading_model", "Laddar SenseNova-profilen i ComfyUI.")
-		if err := waitForSenseNovaReady(ctx, cfg.image, req.Lora, 5*time.Minute); err != nil {
-			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
-			return
-		}
-	}
-	if imageModel == "sensenova-u1-8b-fast" {
-		setImageJobStatusMessage(jobID, "loading_model", "Laddar SenseNova-profilen i ComfyUI.")
-		if err := waitForSenseNovaReady(ctx, cfg.image, "none", 5*time.Minute); err != nil {
-			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
-			return
-		}
-	}
-	if isKreaImageModel(imageModel) {
-		setImageJobStatusMessage(jobID, "loading_model", "Laddar Krea 2 Turbo-profilen i ComfyUI.")
-		if err := waitForKreaReady(ctx, cfg.image, 5*time.Minute); err != nil {
-			setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
-			return
-		}
-	}
-	if prompt := imagePromptFromContext(ctx, cfg, req); prompt != "" {
-		req.Prompt = prompt
+		log.Printf("image job %s skips Ollama prompt rewrite while GPU safety gate is blocked: %v", jobID, gateErr)
 	}
 	if isKreaImageModel(imageModel) {
 		applyKreaPromptSettings(cfg, &req)
 	}
-	releaseOllamaForImage(ctx, cfg)
 	if isSenseNovaImageModel(imageModel) {
 		setImageJobStatusMessage(jobID, "waiting_tts", "Vantar pa Dots TTS innan SenseNova far GPU:n.")
 		if err := waitForVoiceResourcesForImage(ctx, cfg); err != nil {
@@ -1634,20 +1691,82 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 		}()
 		defer stopHeartbeat()
 	}
+	releaseExclusiveGPU := cfg.gpuSafety.beginImage()
+	defer releaseExclusiveGPU()
+	if err := releaseOllamaForImage(ctx, cfg); err != nil {
+		cfg.gpuSafety.clear()
+		gpuReleaseStatus = "failed"
+		setImageJobStatus(
+			jobID,
+			"error",
+			imageResponse{},
+			fmt.Sprintf("kunde inte frigöra Ollama före bildjobbet: %v", err),
+		)
+		return
+	}
+	cleanupAfterComfyError := func(jobErr error) {
+		gpuReleaseStatus = "failed"
+		if releaseErr := releaseComfyAfterImageJob(cfg, jobID); releaseErr != nil {
+			jobErr = errors.Join(jobErr, releaseErr)
+		}
+		setImageJobStatus(jobID, "error", imageResponse{}, jobErr.Error())
+	}
+	if err := syncImageModelControl(ctx, cfg.image, imageModel); err != nil {
+		cleanupAfterComfyError(err)
+		return
+	}
+	if isSenseNovaImageModel(imageModel) && imageModel != "sensenova-u1-8b-fast" {
+		setImageJobStatusMessage(jobID, "loading_model", "Laddar SenseNova-profilen i ComfyUI.")
+		if err := waitForSenseNovaReady(ctx, cfg.image, req.Lora, 5*time.Minute); err != nil {
+			cleanupAfterComfyError(err)
+			return
+		}
+	}
+	if imageModel == "sensenova-u1-8b-fast" {
+		setImageJobStatusMessage(jobID, "loading_model", "Laddar SenseNova-profilen i ComfyUI.")
+		if err := waitForSenseNovaReady(ctx, cfg.image, "none", 5*time.Minute); err != nil {
+			cleanupAfterComfyError(err)
+			return
+		}
+	}
+	if isKreaImageModel(imageModel) {
+		setImageJobStatusMessage(jobID, "loading_model", "Laddar Krea 2 Turbo-profilen i ComfyUI.")
+		if err := waitForKreaReady(ctx, cfg.image, 5*time.Minute); err != nil {
+			cleanupAfterComfyError(err)
+			return
+		}
+	}
 	setImageJobStatus(jobID, "running", imageResponse{}, "")
 	log.Printf("image job %s using model=%s prompt=%q", jobID, imageModel, req.Prompt)
 	out, err := generateWithComfyUI(ctx, cfg.image, user, req, func(status, message string) {
 		setImageJobStatusMessage(jobID, status, message)
 	})
-	if releaseErr := releaseComfyImageModels(context.Background(), cfg.image); releaseErr != nil {
-		log.Printf("ComfyUI model release after image job %s failed: %v", jobID, releaseErr)
-	}
+	releaseErr := releaseComfyAfterImageJob(cfg, jobID)
 	if err != nil {
 		gpuReleaseStatus = "failed"
+		if releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
 		return
 	}
+	if releaseErr != nil {
+		gpuReleaseStatus = "failed"
+		setImageJobStatus(jobID, "error", imageResponse{}, releaseErr.Error())
+		return
+	}
 	setImageJobStatus(jobID, "done", out, "")
+}
+
+func releaseComfyAfterImageJob(cfg serverConfig, jobID string) error {
+	err := releaseComfyImageModels(context.Background(), cfg.image)
+	if err != nil {
+		log.Printf("ComfyUI model release after image job %s failed: %v", jobID, err)
+		cfg.gpuSafety.block(err.Error())
+		return fmt.Errorf("bilden kunde inte lämna GPU:n säkert: %w", err)
+	}
+	cfg.gpuSafety.clear()
+	return nil
 }
 
 func newImageJob() imageJob {
@@ -1776,18 +1895,21 @@ func cleanImagePrompt(prompt string) string {
 	return strings.TrimSpace(prompt)
 }
 
-func releaseOllamaForImage(ctx context.Context, cfg serverConfig) {
+func releaseOllamaForImage(ctx context.Context, cfg serverConfig) error {
 	models := uniqueStrings(
 		cfg.model,
 		cfg.visionModel,
 		cfg.workspaceModel,
 		cfg.reviewModel,
 	)
+	var releaseErrors []error
 	for _, model := range models {
 		if err := unloadOllamaModel(ctx, cfg.ollamaURL, model); err != nil {
 			log.Printf("ollama unload %s before image generation failed: %v", model, err)
+			releaseErrors = append(releaseErrors, fmt.Errorf("%s: %w", model, err))
 		}
 	}
+	return errors.Join(releaseErrors...)
 }
 
 func releaseComfyImageModels(ctx context.Context, image config.ImageConfig) error {
@@ -1795,8 +1917,28 @@ func releaseComfyImageModels(ctx context.Context, image config.ImageConfig) erro
 	if baseURL == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeout := defaultComfyReleaseTimeout
+	if image.ReleaseTimeoutSeconds > 0 {
+		timeout = time.Duration(image.ReleaseTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if err := requestComfyImageModelRelease(ctx, baseURL); err != nil {
+		return err
+	}
+	minimumFree := defaultComfyMinVRAMHeadroomBytes
+	if image.MinVRAMHeadroomMB > 0 {
+		minimumFree = uint64(image.MinVRAMHeadroomMB) * 1024 * 1024
+	}
+	return waitForComfyVRAMHeadroom(
+		ctx,
+		baseURL,
+		minimumFree,
+		defaultComfyReleasePollInterval,
+	)
+}
+
+func requestComfyImageModelRelease(ctx context.Context, baseURL string) error {
 	raw, err := json.Marshal(map[string]bool{
 		"unload_models": true,
 		"free_memory":   true,
@@ -1828,6 +1970,93 @@ func releaseComfyImageModels(ctx context.Context, image config.ImageConfig) erro
 		)
 	}
 	return nil
+}
+
+type comfySystemStats struct {
+	Devices []struct {
+		Name      string `json:"name"`
+		Type      string `json:"type"`
+		VRAMTotal uint64 `json:"vram_total"`
+		VRAMFree  uint64 `json:"vram_free"`
+	} `json:"devices"`
+}
+
+func waitForComfyVRAMHeadroom(
+	ctx context.Context,
+	baseURL string,
+	minimumFree uint64,
+	pollInterval time.Duration,
+) error {
+	if pollInterval <= 0 {
+		pollInterval = defaultComfyReleasePollInterval
+	}
+	var lastFree uint64
+	var lastTotal uint64
+	var lastErr error
+	for {
+		free, total, err := readComfyVRAM(ctx, baseURL)
+		if err == nil {
+			lastFree = free
+			lastTotal = total
+			if free >= minimumFree {
+				return nil
+			}
+		} else if lastTotal == 0 {
+			lastErr = err
+		}
+		if !sleepContext(ctx, pollInterval) {
+			if lastErr != nil {
+				return fmt.Errorf(
+					"ComfyUI kunde inte verifiera frigjort grafikminne: %w",
+					lastErr,
+				)
+			}
+			return fmt.Errorf(
+				"ComfyUI frigjorde inte säker VRAM-marginal: ledigt %s av %s, kräver minst %s",
+				formatByteSize(lastFree),
+				formatByteSize(lastTotal),
+				formatByteSize(minimumFree),
+			)
+		}
+	}
+}
+
+func readComfyVRAM(ctx context.Context, baseURL string) (uint64, uint64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/system_stats", nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return 0, 0, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, 0, fmt.Errorf(
+			"ComfyUI system_stats returned %s: %s",
+			resp.Status,
+			strings.TrimSpace(string(body)),
+		)
+	}
+	var stats comfySystemStats
+	if err := json.Unmarshal(body, &stats); err != nil {
+		return 0, 0, fmt.Errorf("tolka ComfyUI system_stats: %w", err)
+	}
+	for _, device := range stats.Devices {
+		if device.Type == "cuda" || device.VRAMTotal > 0 {
+			return device.VRAMFree, device.VRAMTotal, nil
+		}
+	}
+	return 0, 0, errors.New("ComfyUI system_stats saknar CUDA-enhet med VRAM-data")
+}
+
+func formatByteSize(value uint64) string {
+	const mib = uint64(1024 * 1024)
+	return fmt.Sprintf("%.0f MiB", float64(value)/float64(mib))
 }
 
 func waitForVoiceResourcesForImage(ctx context.Context, cfg serverConfig) error {

@@ -166,14 +166,20 @@ func runWorkspaceJob(
 			}
 		})
 	}
-	message, files, err := askWorkspaceOllama(
-		ctx,
-		cfg.ollamaURL,
-		model,
-		system,
-		messages,
-		progress,
-	)
+	var message string
+	var files []workspaceResponseFile
+	releaseGPU, err := cfg.gpuSafety.beginLocalAI()
+	if err == nil {
+		defer releaseGPU()
+		message, files, err = askWorkspaceOllama(
+			ctx,
+			cfg.ollamaURL,
+			model,
+			system,
+			messages,
+			progress,
+		)
+	}
 	if err == nil && len(files) > 0 {
 		publishWorkspaceDraft(jobID, files)
 		if verifierDriven {
@@ -395,6 +401,19 @@ func runWorkspaceJobLocalRepair(
 		reviewerModel = model
 	}
 	repairIssues := []string{"Verifierarens råa diagnos:\n" + diagnostics}
+	releaseGPU, err := cfg.gpuSafety.beginLocalAI()
+	if err != nil {
+		updateWorkspaceJob(jobID, func(job *workspaceJob) {
+			if job.Status == "cancelled" {
+				return
+			}
+			job.Status = "failed"
+			job.Message = "Reparationsjobbet säkerhetsstoppades."
+			job.Error = err.Error()
+		})
+		return
+	}
+	defer releaseGPU()
 	progress("Den oberoende diagnostolken härleder den konkreta felorsaken.")
 	diagnosed, diagnosisErr := analyzeWorkspaceDiagnosticsOllama(
 		ctx,
@@ -412,7 +431,7 @@ func runWorkspaceJobLocalRepair(
 		}
 		repairIssues = append(diagnosed, repairIssues...)
 	}
-	message, files, err := repairWorkspaceProposalOllama(
+	message, files, err = repairWorkspaceProposalOllama(
 		ctx,
 		cfg.ollamaURL,
 		model,

@@ -22,6 +22,17 @@ language = "en"
 voice_instruction = "A warm, clear English voice with calm natural pacing."
 timeout_seconds = 45
 
+[image]
+comfyui_url = "http://192.168.32.88:8188"
+model_control_url = "http://192.168.32.88:8190/model"
+directory = "var/images"
+timeout_seconds = 720
+release_timeout_seconds = 45
+min_vram_headroom_mb = 4096
+default_width = 1024
+default_height = 1024
+default_steps = 8
+
 [eutheroxide]
 base_url = "http://192.168.32.186:8080"
 users_url = "http://192.168.32.186:8080/api/app/users"

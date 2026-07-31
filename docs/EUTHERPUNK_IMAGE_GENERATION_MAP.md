@@ -74,6 +74,13 @@ systemctl --user restart comfyui.service
 curl -fsS http://192.168.32.88:8188/system_stats
 ```
 
+After every completed or failed render, EutherPunk posts `unload_models` and
+`free_memory` to ComfyUI `/free`, then polls `/system_stats`. The image job is
+not completed and its GPU handoff is not considered safe until the configured
+VRAM margin is visible. The server defaults are 4096 MiB free within 45 seconds;
+new local chat and workspace-model calls are fail-closed while cleanup is
+unverified.
+
 ## Z-Image Assets
 
 Required local ComfyUI files:

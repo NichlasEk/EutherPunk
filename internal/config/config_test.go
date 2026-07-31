@@ -80,4 +80,10 @@ func TestLoadMissingConfigUsesDefaults(t *testing.T) {
 	if cfg.EutherOxide.StatusURL == "" {
 		t.Fatal("expected default EutherOxide status URL")
 	}
+	if cfg.Image.ReleaseTimeoutSeconds != 45 {
+		t.Fatalf("ReleaseTimeoutSeconds = %d", cfg.Image.ReleaseTimeoutSeconds)
+	}
+	if cfg.Image.MinVRAMHeadroomMB != 4096 {
+		t.Fatalf("MinVRAMHeadroomMB = %d", cfg.Image.MinVRAMHeadroomMB)
+	}
 }

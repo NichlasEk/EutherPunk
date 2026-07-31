@@ -237,7 +237,11 @@ coding request and does not invoke image generation.
 Before an image job, the server explicitly unloads the chat, vision, workspace
 and review roles from Ollama. After ComfyUI has returned the permanent PNG,
 EutherPunk asks it to unload cached image models and free memory before another
-local AI role is allowed to warm up.
+local AI role is allowed to warm up. The handoff is verified against ComfyUI's
+`/system_stats`: by default at least 4096 MiB VRAM must be free within 45
+seconds. Until that succeeds, new chat and workspace-model work is blocked
+instead of risking the desktop GPU. Configure the bounds with
+`image.min_vram_headroom_mb` and `image.release_timeout_seconds`.
 
 ### Non-interactive local worker
 

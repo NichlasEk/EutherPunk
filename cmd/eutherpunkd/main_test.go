@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/NichlasEk/EutherPunk/internal/config"
@@ -33,13 +34,15 @@ func TestImageResourceHandoffUnloadsAllModelRolesAndComfy(t *testing.T) {
 	}))
 	defer ollama.Close()
 
-	releaseOllamaForImage(context.Background(), serverConfig{
+	if err := releaseOllamaForImage(context.Background(), serverConfig{
 		ollamaURL:      ollama.URL,
 		model:          "chat-model",
 		visionModel:    "vision-model",
 		workspaceModel: "workspace-model",
 		reviewModel:    "review-model",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	for _, model := range []string{
 		"chat-model",
 		"vision-model",
@@ -53,13 +56,19 @@ func TestImageResourceHandoffUnloadsAllModelRolesAndComfy(t *testing.T) {
 
 	var freeRequest map[string]bool
 	comfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/free" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/free":
+			if err := json.NewDecoder(r.Body).Decode(&freeRequest); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/system_stats":
+			_, _ = w.Write([]byte(
+				`{"devices":[{"type":"cuda","vram_total":25272975360,"vram_free":21474836480}]}`,
+			))
+		default:
 			t.Fatalf("Comfy request = %s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&freeRequest); err != nil {
-			t.Fatal(err)
-		}
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer comfy.Close()
 	if err := releaseComfyImageModels(
@@ -71,6 +80,110 @@ func TestImageResourceHandoffUnloadsAllModelRolesAndComfy(t *testing.T) {
 	if !freeRequest["unload_models"] || !freeRequest["free_memory"] {
 		t.Fatalf("Comfy free payload = %#v", freeRequest)
 	}
+}
+
+func TestWaitForComfyVRAMHeadroomWaitsForAsynchronousRelease(t *testing.T) {
+	var requests int
+	comfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/system_stats" {
+			t.Fatalf("Comfy request = %s %s", r.Method, r.URL.Path)
+		}
+		requests++
+		free := uint64(512 * 1024 * 1024)
+		if requests >= 3 {
+			free = 6 * 1024 * 1024 * 1024
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"devices": []map[string]any{{
+				"type":       "cuda",
+				"vram_total": uint64(24 * 1024 * 1024 * 1024),
+				"vram_free":  free,
+			}},
+		})
+	}))
+	defer comfy.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitForComfyVRAMHeadroom(
+		ctx,
+		comfy.URL,
+		4*1024*1024*1024,
+		time.Millisecond,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 {
+		t.Fatalf("system_stats requests = %d, want 3", requests)
+	}
+}
+
+func TestWaitForComfyVRAMHeadroomFailsClosed(t *testing.T) {
+	comfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(
+			`{"devices":[{"type":"cuda","vram_total":25272975360,"vram_free":536870912}]}`,
+		))
+	}))
+	defer comfy.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	err := waitForComfyVRAMHeadroom(
+		ctx,
+		comfy.URL,
+		4*1024*1024*1024,
+		time.Millisecond,
+	)
+	if err == nil || !strings.Contains(err.Error(), "kräver minst 4096 MiB") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestGPUSafetyGateBlocksUntilVerifiedCleanup(t *testing.T) {
+	gate := &gpuSafetyGate{}
+	if err := gate.check(); err != nil {
+		t.Fatal(err)
+	}
+	gate.block("bara 512 MiB ledigt")
+	if err := gate.check(); err == nil || !strings.Contains(err.Error(), "512 MiB") {
+		t.Fatalf("blocked error = %v", err)
+	}
+	gate.clear()
+	if err := gate.check(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGPUSafetyGateWaitsForActiveLocalAI(t *testing.T) {
+	gate := &gpuSafetyGate{}
+	releaseLocal, err := gate.beginLocalAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageAcquired := make(chan struct{})
+	go func() {
+		releaseImage := gate.beginImage()
+		close(imageAcquired)
+		gate.clear()
+		releaseImage()
+	}()
+
+	select {
+	case <-imageAcquired:
+		t.Fatal("image acquired GPU while local AI still held a shared lease")
+	case <-time.After(10 * time.Millisecond):
+	}
+	releaseLocal()
+	select {
+	case <-imageAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("image did not acquire GPU after local AI released it")
+	}
+	releaseAfter, err := gate.beginLocalAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseAfter()
 }
 
 func TestAskWorkspaceOllamaPlansThenGeneratesFilesSeparately(t *testing.T) {
