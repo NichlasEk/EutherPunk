@@ -30,6 +30,7 @@ type workspaceAssetIntent struct {
 	Original      string
 	PreviousAsset *workspaceAssetRecord
 	UseExisting   bool
+	DisplayOnly   bool
 }
 
 type workspaceAssetRegistry struct {
@@ -161,6 +162,24 @@ func prepareNaturalWorkspaceAsset(
 		); err != nil {
 			return preparedWorkspaceAsset{}, true, err
 		}
+	}
+	if intent.DisplayOnly {
+		summary := "Bildasset skapad och visad: " + record.Path
+		if err := recordAssetWorkflowState(
+			cfg.workspace,
+			"asset_displayed",
+			record.LogicalName,
+			record.Path,
+			request,
+			summary,
+		); err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
+		return preparedWorkspaceAsset{
+			Path:      record.Path,
+			Summary:   summary,
+			Completed: true,
+		}, true, nil
 	}
 
 	supported, applied, err := integrateWorkspaceAssetDeterministically(
@@ -300,6 +319,7 @@ func detectWorkspaceAssetIntent(
 		Original:      strings.TrimSpace(request),
 		PreviousAsset: previous,
 		UseExisting:   useExisting,
+		DisplayOnly:   standaloneImage && !integrationRequest && !assetRequest,
 	}, true
 }
 

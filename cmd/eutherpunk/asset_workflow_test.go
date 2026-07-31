@@ -66,8 +66,21 @@ func TestDetectStandaloneImageRequestInsideCodingWorkspace(t *testing.T) {
 	if intent.Role != "asset" || intent.LogicalName != "generated-asset" {
 		t.Fatalf("intent = %#v", intent)
 	}
+	if !intent.DisplayOnly {
+		t.Fatalf("standalone image request was marked for code integration: %#v", intent)
+	}
 	if !strings.Contains(intent.ImagePrompt, request) {
 		t.Fatalf("image prompt does not preserve original request: %q", intent.ImagePrompt)
+	}
+}
+
+func TestIntegratedImageRequestIsNotDisplayOnly(t *testing.T) {
+	intent, ok := detectWorkspaceAssetIntent(
+		"gör en bild av havet och lägg in som assett",
+		workspaceAssetRegistry{Version: assetRegistryVersion},
+	)
+	if !ok || intent.DisplayOnly {
+		t.Fatalf("integrated asset intent = %#v, ok=%v", intent, ok)
 	}
 }
 
@@ -209,5 +222,67 @@ func TestPrepareNaturalWorkspaceAssetGeneratesRegistersAndHandsOff(t *testing.T)
 		!strings.Contains(context, prepared.Path) ||
 		!strings.Contains(context, `"asset_status": "asset_ready"`) {
 		t.Fatalf("project memory context = %q", context)
+	}
+}
+
+func TestPrepareStandaloneWorkspaceImageStopsBeforeCodingJob(t *testing.T) {
+	png := append([]byte("\x89PNG\r\n\x1a\n"), []byte("cat-image")...)
+	originalClient := cliHTTPClient
+	originalInterval := cliImagePollInterval
+	cliImagePollInterval = time.Millisecond
+	cliHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/api/eutherpunk/images/generate":
+			return testHTTPResponse(http.StatusAccepted, `{"job_id":"cat-1","status":"queued"}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/api/eutherpunk/images/jobs/cat-1":
+			return testHTTPResponse(http.StatusOK, `{"job_id":"cat-1","status":"done","image":{"filename":"cat.png","url":"/api/eutherpunk/images/nichlas/cat.png"}}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/api/eutherpunk/images/nichlas/cat.png":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(bytes.NewReader(png)),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+			return nil, nil
+		}
+	})}
+	t.Cleanup(func() {
+		cliHTTPClient = originalClient
+		cliImagePollInterval = originalInterval
+	})
+
+	root := t.TempDir()
+	cfg := cliConfig{
+		apiURL:    "https://example.invalid",
+		workspace: workspaceState{Root: root},
+		credentials: authCredentials{
+			AccessToken: "test-token",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		},
+	}
+	request := "du kan du prova att göra en bild på en glad katt i hatt och visa här?"
+	prepared, handled, err := prepareNaturalWorkspaceAsset(
+		cfg,
+		bufio.NewReader(strings.NewReader("")),
+		&sessionPermissions{files: permissionAuto},
+		request,
+		[]chatMessage{{Role: "user", Content: request}},
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handled || !prepared.Completed || prepared.Path == "" || prepared.CodePrompt != "" {
+		t.Fatalf("standalone result = %#v, handled=%v", prepared, handled)
+	}
+	state, err := os.ReadFile(filepath.Join(root, ".eutherpunk", "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(state), `"asset_status": "asset_displayed"`) {
+		t.Fatalf("project state = %s", state)
 	}
 }
