@@ -1639,6 +1639,9 @@ func runImageJob(cfg serverConfig, user string, req imageRequest, jobID string) 
 	out, err := generateWithComfyUI(ctx, cfg.image, user, req, func(status, message string) {
 		setImageJobStatusMessage(jobID, status, message)
 	})
+	if releaseErr := releaseComfyImageModels(context.Background(), cfg.image); releaseErr != nil {
+		log.Printf("ComfyUI model release after image job %s failed: %v", jobID, releaseErr)
+	}
 	if err != nil {
 		gpuReleaseStatus = "failed"
 		setImageJobStatus(jobID, "error", imageResponse{}, err.Error())
@@ -1774,12 +1777,57 @@ func cleanImagePrompt(prompt string) string {
 }
 
 func releaseOllamaForImage(ctx context.Context, cfg serverConfig) {
-	models := uniqueStrings(cfg.model, cfg.visionModel)
+	models := uniqueStrings(
+		cfg.model,
+		cfg.visionModel,
+		cfg.workspaceModel,
+		cfg.reviewModel,
+	)
 	for _, model := range models {
 		if err := unloadOllamaModel(ctx, cfg.ollamaURL, model); err != nil {
 			log.Printf("ollama unload %s before image generation failed: %v", model, err)
 		}
 	}
+}
+
+func releaseComfyImageModels(ctx context.Context, image config.ImageConfig) error {
+	baseURL := strings.TrimRight(image.ComfyUIURL, "/")
+	if baseURL == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	raw, err := json.Marshal(map[string]bool{
+		"unload_models": true,
+		"free_memory":   true,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		baseURL+"/free",
+		bytes.NewReader(raw),
+	)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf(
+			"ComfyUI free returned %s: %s",
+			resp.Status,
+			strings.TrimSpace(string(body)),
+		)
+	}
+	return nil
 }
 
 func waitForVoiceResourcesForImage(ctx context.Context, cfg serverConfig) error {

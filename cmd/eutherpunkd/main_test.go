@@ -8,7 +8,70 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/NichlasEk/EutherPunk/internal/config"
 )
+
+func TestImageResourceHandoffUnloadsAllModelRolesAndComfy(t *testing.T) {
+	unloaded := make(map[string]bool)
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/generate" {
+			t.Fatalf("Ollama path = %q", r.URL.Path)
+		}
+		var request struct {
+			Model     string `json:"model"`
+			KeepAlive int    `json:"keep_alive"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.KeepAlive != 0 {
+			t.Fatalf("keep_alive = %d", request.KeepAlive)
+		}
+		unloaded[request.Model] = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ollama.Close()
+
+	releaseOllamaForImage(context.Background(), serverConfig{
+		ollamaURL:      ollama.URL,
+		model:          "chat-model",
+		visionModel:    "vision-model",
+		workspaceModel: "workspace-model",
+		reviewModel:    "review-model",
+	})
+	for _, model := range []string{
+		"chat-model",
+		"vision-model",
+		"workspace-model",
+		"review-model",
+	} {
+		if !unloaded[model] {
+			t.Fatalf("%s was not unloaded: %#v", model, unloaded)
+		}
+	}
+
+	var freeRequest map[string]bool
+	comfy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/free" {
+			t.Fatalf("Comfy request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&freeRequest); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer comfy.Close()
+	if err := releaseComfyImageModels(
+		context.Background(),
+		config.ImageConfig{ComfyUIURL: comfy.URL},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !freeRequest["unload_models"] || !freeRequest["free_memory"] {
+		t.Fatalf("Comfy free payload = %#v", freeRequest)
+	}
+}
 
 func TestAskWorkspaceOllamaPlansThenGeneratesFilesSeparately(t *testing.T) {
 	var calls int

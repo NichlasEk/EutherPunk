@@ -451,6 +451,16 @@ func assist(cfg cliConfig, initialPrompt string) error {
 					prompt = ""
 					continue
 				}
+				if preparedAsset.Completed {
+					fmt.Println("eutherpunk>", preparedAsset.Summary)
+					history = append(history, chatMessage{
+						Role:    "assistant",
+						Content: preparedAsset.Summary,
+					})
+					history = trimHistory(history)
+					prompt = ""
+					continue
+				}
 				fmt.Println("eutherpunk> asseten är klar; lämnar den exakta sökvägen till kodaren.")
 				history = append(
 					history,

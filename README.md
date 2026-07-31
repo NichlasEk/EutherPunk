@@ -224,12 +224,20 @@ example: `Fint, nu skulle jag vilja ha havet som bakgrund med en riktig
 bildgenererad asset.` The CLI recognizes explicit generated-image roles such as
 backgrounds, sprites, textures, icons and covers. It generates and saves the PNG
 first, records its logical role and SHA-256 in `.eutherpunk/assets.json`, and
-then starts the coding job with the exact relative path. The code model is told
-to preserve the existing project and integrate that file rather than inventing
+then integrates it with the exact relative path. A background for an existing
+root `index.html` uses a small, marked and locally validated CSS patch without
+starting a code model; other asset roles fall back to the bounded coding job.
+The code model is told to preserve the existing project rather than inventing
 an asset path or embedding image data. Follow-ups such as `gör havet mörkare`
-reuse and supersede the matching active asset. Ordinary code styling such as
-`gör bakgrunden blå med CSS` remains a normal coding request and does not invoke
-image generation.
+reuse and supersede the matching active asset, while `koppla in oceanbilden som
+bakgrund` reuses the registered PNG without another image or model request.
+Ordinary code styling such as `gör bakgrunden blå med CSS` remains a normal
+coding request and does not invoke image generation.
+
+Before an image job, the server explicitly unloads the chat, vision, workspace
+and review roles from Ollama. After ComfyUI has returned the permanent PNG,
+EutherPunk asks it to unload cached image models and free memory before another
+local AI role is allowed to warm up.
 
 ### Non-interactive local worker
 

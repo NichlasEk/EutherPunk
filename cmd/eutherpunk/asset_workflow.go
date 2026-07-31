@@ -29,6 +29,7 @@ type workspaceAssetIntent struct {
 	ImagePrompt   string
 	Original      string
 	PreviousAsset *workspaceAssetRecord
+	UseExisting   bool
 }
 
 type workspaceAssetRegistry struct {
@@ -53,6 +54,7 @@ type preparedWorkspaceAsset struct {
 	Path       string
 	CodePrompt string
 	Summary    string
+	Completed  bool
 }
 
 var nonAssetSlugCharacters = regexp.MustCompile(`[^a-z0-9]+`)
@@ -76,68 +78,130 @@ func prepareNaturalWorkspaceAsset(
 	if err := ensureProjectMemory(cfg.workspace, request); err != nil {
 		return preparedWorkspaceAsset{}, true, err
 	}
-	if err := recordAssetWorkflowState(
-		cfg.workspace,
-		"asset_pending",
-		intent.LogicalName,
-		"",
-		request,
-		"Generating project image asset before code integration.",
-	); err != nil {
-		return preparedWorkspaceAsset{}, true, err
+	var record workspaceAssetRecord
+	if intent.UseExisting {
+		if intent.PreviousAsset == nil {
+			return preparedWorkspaceAsset{}, true, errors.New("ingen befintlig asset valdes")
+		}
+		record = *intent.PreviousAsset
+		if err := verifyRegisteredWorkspaceAsset(cfg.workspace, record); err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
+		if err := recordAssetWorkflowState(
+			cfg.workspace,
+			"asset_integrating",
+			record.LogicalName,
+			record.Path,
+			request,
+			"Using an existing verified asset for deterministic integration.",
+		); err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
+	} else {
+		if err := recordAssetWorkflowState(
+			cfg.workspace,
+			"asset_pending",
+			intent.LogicalName,
+			"",
+			request,
+			"Generating project image asset before code integration.",
+		); err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
+
+		preferred := semanticAssetFilename(intent.LogicalName)
+		asset, err := createCLIImageAsset(
+			cfg,
+			reader,
+			permissions,
+			intent.ImagePrompt,
+			history,
+			output,
+			preferred,
+		)
+		if err != nil {
+			_ = recordAssetWorkflowState(
+				cfg.workspace,
+				"asset_failed",
+				intent.LogicalName,
+				"",
+				request,
+				err.Error(),
+			)
+			return preparedWorkspaceAsset{}, true, err
+		}
+		if !asset.Saved {
+			_ = recordAssetWorkflowState(
+				cfg.workspace,
+				"asset_cancelled",
+				intent.LogicalName,
+				"",
+				request,
+				"Image generated but local asset write was not approved.",
+			)
+			return preparedWorkspaceAsset{}, true, nil
+		}
+
+		record, err = registerWorkspaceAsset(
+			cfg.workspace,
+			registry,
+			intent,
+			asset.Path,
+		)
+		if err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
+		if err := recordAssetWorkflowState(
+			cfg.workspace,
+			"asset_ready",
+			record.LogicalName,
+			record.Path,
+			request,
+			"Generated asset is ready for code integration.",
+		); err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
 	}
 
-	preferred := semanticAssetFilename(intent.LogicalName)
-	asset, err := createCLIImageAsset(
-		cfg,
+	supported, applied, err := integrateWorkspaceAssetDeterministically(
+		cfg.workspace,
 		reader,
 		permissions,
-		intent.ImagePrompt,
-		history,
-		output,
-		preferred,
+		record,
 	)
 	if err != nil {
 		_ = recordAssetWorkflowState(
 			cfg.workspace,
-			"asset_failed",
-			intent.LogicalName,
-			"",
+			"asset_integration_failed",
+			record.LogicalName,
+			record.Path,
 			request,
 			err.Error(),
 		)
 		return preparedWorkspaceAsset{}, true, err
 	}
-	if !asset.Saved {
-		_ = recordAssetWorkflowState(
+	if supported {
+		status := "asset_integration_skipped"
+		summary := "Bildasseten är sparad men index.html ändrades inte."
+		if applied {
+			status = "asset_integrated"
+			summary = "Bildasseten kopplades in direkt i index.html utan ett kodmodelljobb."
+		}
+		if err := recordAssetWorkflowState(
 			cfg.workspace,
-			"asset_cancelled",
-			intent.LogicalName,
-			"",
+			status,
+			record.LogicalName,
+			record.Path,
 			request,
-			"Image generated but local asset write was not approved.",
-		)
-		return preparedWorkspaceAsset{}, true, nil
-	}
-
-	record, err := registerWorkspaceAsset(
-		cfg.workspace,
-		registry,
-		intent,
-		asset.Path,
-	)
-	if err != nil {
-		return preparedWorkspaceAsset{}, true, err
-	}
-	if err := recordAssetWorkflowState(
-		cfg.workspace,
-		"asset_ready",
-		record.LogicalName,
-		record.Path,
-		request,
-		"Generated asset is ready for code integration.",
-	); err != nil {
-		return preparedWorkspaceAsset{}, true, err
+			summary,
+		); err != nil {
+			return preparedWorkspaceAsset{}, true, err
+		}
+		return preparedWorkspaceAsset{
+			Path:      record.Path,
+			Summary:   summary,
+			Completed: true,
+		}, true, nil
 	}
 
 	codePrompt := fmt.Sprintf(
@@ -179,6 +243,13 @@ func detectWorkspaceAssetIntent(
 	}
 	previous := referencedWorkspaceAsset(normalized, registry)
 	role := detectAssetRole(normalized)
+	integrationRequest := containsAnyPhrase(normalized,
+		"koppla in", "lägg in", "lagg in", "använd", "anvand",
+		"use as", "use it", "set as",
+	)
+	if previous == nil && role != "" && integrationRequest {
+		previous = latestActiveWorkspaceAsset(registry, role)
+	}
 	if role == "" && previous != nil {
 		role = previous.Role
 	}
@@ -199,7 +270,8 @@ func detectWorkspaceAssetIntent(
 		"byt", "andra", "forandra", "modify", "darker", "lighter",
 		"more realistic", "regenerate", "replace",
 	)
-	if role == "" || (!explicitImage && !visualRevision) {
+	useExisting := previous != nil && integrationRequest && !visualRevision && !explicitImage
+	if role == "" || (!explicitImage && !visualRevision && !useExisting) {
 		return workspaceAssetIntent{}, false
 	}
 	logicalName := logicalAssetName(normalized, role, previous)
@@ -216,7 +288,21 @@ func detectWorkspaceAssetIntent(
 		ImagePrompt:   imagePrompt,
 		Original:      strings.TrimSpace(request),
 		PreviousAsset: previous,
+		UseExisting:   useExisting,
 	}, true
+}
+
+func latestActiveWorkspaceAsset(
+	registry workspaceAssetRegistry,
+	role string,
+) *workspaceAssetRecord {
+	for index := len(registry.Assets) - 1; index >= 0; index-- {
+		asset := registry.Assets[index]
+		if asset.Status == "active" && asset.Role == role {
+			return &asset
+		}
+	}
+	return nil
 }
 
 func detectAssetRole(normalized string) string {
@@ -387,6 +473,12 @@ func recordAssetWorkflowState(
 	state.AssetName = compactProjectText(name, 200)
 	state.AssetPath = compactProjectText(path, 500)
 	state.AssetRequest = compactProjectText(request, 1000)
+	state.LastTask = state.AssetRequest
+	state.Model = ""
+	state.JobID = ""
+	state.CheckpointRevision = 0
+	state.Issues = nil
+	state.Files = assetWorkflowFiles(status, path)
 	state.Summary = compactProjectText(message, 2000)
 	state.UpdatedAt = projectMemoryTimestamp()
 	if err := saveProjectMemoryState(dir, state); err != nil {
@@ -396,7 +488,7 @@ func recordAssetWorkflowState(
 		Type:    "asset_workflow",
 		Status:  status,
 		Task:    state.AssetRequest,
-		Files:   compactAssetPath(path),
+		Files:   state.Files,
 		Message: state.Summary,
 	})
 }
@@ -470,4 +562,12 @@ func compactAssetPath(path string) []string {
 		return nil
 	}
 	return []string{filepath.ToSlash(path)}
+}
+
+func assetWorkflowFiles(status, path string) []string {
+	files := compactAssetPath(path)
+	if status == "asset_integrated" {
+		files = append(files, "index.html")
+	}
+	return files
 }
